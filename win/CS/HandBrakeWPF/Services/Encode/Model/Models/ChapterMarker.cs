@@ -11,11 +11,11 @@ namespace HandBrakeWPF.Services.Encode.Model.Models
 {
     using System;
 
-    using HandBrakeWPF.Utilities;
+    using Caliburn.Micro;
 
-    /// <summary>
-    /// A Movie Chapter
-    /// </summary>
+    using Newtonsoft.Json;
+
+    [JsonObject(MemberSerialization.OptOut)]
     public class ChapterMarker : PropertyChangedBase
     {
         /// <summary>

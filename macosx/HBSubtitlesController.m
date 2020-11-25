@@ -6,14 +6,14 @@
 
 #import "HBSubtitlesController.h"
 #import "HBSubtitlesDefaultsController.h"
+#import "HBTrackTitleViewController.h"
 
-@import HandBrakeKit.HBSubtitles;
-@import HandBrakeKit.HBSubtitlesDefaults;
+@import HandBrakeKit;
 
 @interface HBSubtitlesController ()
 
-// Defaults
 @property (nonatomic, readwrite, strong) HBSubtitlesDefaultsController *defaultsController;
+@property (nonatomic, weak) IBOutlet NSTableView *table;
 
 @end
 
@@ -62,32 +62,34 @@
     HBSubtitlesDefaults *defaults = [self.subtitles.defaults copy];
     self.defaultsController = [[HBSubtitlesDefaultsController alloc] initWithSettings:defaults];
 
-    [NSApp beginSheet:self.defaultsController.window
-       modalForWindow:self.view.window
-        modalDelegate:self
-       didEndSelector:@selector(sheetDidEnd:returnCode:contextInfo:)
-          contextInfo:(void *)CFBridgingRetain(defaults)];
+    [self.view.window beginSheet:self.defaultsController.window completionHandler:^(NSModalResponse returnCode) {
+        if (returnCode == NSModalResponseOK)
+        {
+            self.subtitles.defaults = defaults;
+        }
+        self.defaultsController = nil;
+    }];
 }
 
-- (void)sheetDidEnd:(NSWindow *)sheet returnCode:(NSInteger)returnCode contextInfo:(void *)contextInfo
+- (IBAction)showAdditionalSettingsPopOver:(id)sender
 {
-    HBSubtitlesDefaults *defaults = (HBSubtitlesDefaults *)CFBridgingRelease(contextInfo);
-
-    if (returnCode == NSModalResponseOK)
+    HBTrackTitleViewController *controller = [[HBTrackTitleViewController alloc] init];
+    NSInteger index = [self.table rowForView:sender];
+    if (index != -1)
     {
-        self.subtitles.defaults = defaults;
+        controller.track = [self.subtitles objectInTracksAtIndex:index];
+        [self presentViewController:controller asPopoverRelativeToRect:[sender bounds] ofView:sender preferredEdge:NSRectEdgeMinX behavior:NSPopoverBehaviorTransient];
     }
-    self.defaultsController = nil;
 }
 
-#pragma mark - Srt import
+#pragma mark - External subtitles import
 
 /**
- *  Imports a srt file.
+ *  Imports a srt/ssa file.
  *
  *  @param sender
  */
-- (IBAction)browseImportSrtFile:(id)sender
+- (IBAction)browseImportExternalFile:(id)sender
 {
     NSOpenPanel *panel = [NSOpenPanel openPanel];
     panel.allowsMultipleSelection = NO;
@@ -95,27 +97,27 @@
     panel.canChooseDirectories = NO;
 
     NSURL *sourceDirectory;
-    if ([[NSUserDefaults standardUserDefaults] URLForKey:@"LastSrtImportDirectoryURL"])
+    if ([[NSUserDefaults standardUserDefaults] URLForKey:@"LastExternalSubImportDirectoryURL"])
     {
-        sourceDirectory = [[NSUserDefaults standardUserDefaults] URLForKey:@"LastSrtImportDirectoryURL"];
+        sourceDirectory = [[NSUserDefaults standardUserDefaults] URLForKey:@"LastExternalSubImportDirectoryURL"];
     }
     else
     {
-        sourceDirectory = [[NSURL fileURLWithPath:NSHomeDirectory()] URLByAppendingPathComponent:@"Desktop"];
+        sourceDirectory = [[NSURL fileURLWithPath:NSHomeDirectory()] URLByAppendingPathComponent:@"Desktop" isDirectory:YES];
     }
 
     panel.directoryURL = sourceDirectory;
-    panel.allowedFileTypes = @[@"srt"];
+    panel.allowedFileTypes = @[@"srt", @"ssa", @"ass"];
 
     [panel beginSheetModalForWindow:self.view.window completionHandler:^(NSInteger result)
     {
-        if (result == NSFileHandlingPanelOKButton)
+        if (result == NSModalResponseOK)
         {
-            NSURL *importSrtFileURL = panel.URL;
-            NSURL *importSrtDirectory = importSrtFileURL.URLByDeletingLastPathComponent;
-            [[NSUserDefaults standardUserDefaults] setURL:importSrtDirectory forKey:@"LastSrtImportDirectoryURL"];
+            NSURL *importFileURL = panel.URL;
+            NSURL *importDirectory = importFileURL.URLByDeletingLastPathComponent;
+            [[NSUserDefaults standardUserDefaults] setURL:importDirectory forKey:@"LastExternalSubImportDirectoryURL"];
 
-            [self.subtitles addSrtTrackFromURL:importSrtFileURL];
+            [self.subtitles addExternalTrackFromURL:importFileURL];
         }
     }];
 }

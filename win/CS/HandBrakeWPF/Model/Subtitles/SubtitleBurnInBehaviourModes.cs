@@ -9,28 +9,28 @@
 
 namespace HandBrakeWPF.Model.Subtitles
 {
-    using System.ComponentModel.DataAnnotations;
+    using HandBrake.Interop.Attributes;
 
-    using HandBrake.ApplicationServices.Attributes;
+    using HandBrakeWPF.Properties;
 
     /// <summary>
     /// The subtitle behaviours modes.
     /// </summary>
     public enum SubtitleBurnInBehaviourModes
     {
-        [Display(Name = "None")]
+        [DisplayName(typeof(Resources), "SubtitleBurnInBehaviourModes_None")]
         [ShortName("none")]
         None = 0,
 
-        [Display(Name = "Foreign Audio Track")]
+        [DisplayName(typeof(Resources), "SubtitleBurnInBehaviourModes_ForeignAudioTrack")]
         [ShortName("foreign")]
         ForeignAudio,
 
-        [Display(Name = "First Track")]
+        [DisplayName(typeof(Resources), "SubtitleBurnInBehaviourModes_FirstTrack")]
         [ShortName("first")]
         FirstTrack,
 
-        [Display(Name = "Foreign Audio Preferred, else First")]
+        [DisplayName(typeof(Resources), "SubtitleBurnInBehaviourModes_ForeignAudioPreferredElseFirst")]
         [ShortName("foreign_first")]
         ForeignAudioPreferred,
     }

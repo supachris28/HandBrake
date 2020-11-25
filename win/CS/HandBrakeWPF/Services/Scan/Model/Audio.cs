@@ -51,9 +51,10 @@ namespace HandBrakeWPF.Services.Scan.Model
         /// <param name="channelLayout">
         /// The channel Layout.
         /// </param>
-        public Audio(int trackNumber, string language, string languageCode, string description, int codec, int sampleRate, int bitrate, int channelLayout)
+        public Audio(int trackNumber, string language, string languageCode, string description, int codec, int sampleRate, int bitrate, long channelLayout, string name)
         {
             this.ChannelLayout = channelLayout;
+            this.Name = name;
             this.TrackNumber = trackNumber;
             this.Language = language;
             this.LanguageCode = languageCode;
@@ -61,6 +62,11 @@ namespace HandBrakeWPF.Services.Scan.Model
             this.Codec = codec;
             this.SampleRate = sampleRate;
             this.Bitrate = bitrate;
+        }
+
+        public Audio(int trackNumber)
+        {
+            this.TrackNumber = trackNumber;
         }
 
         /// <summary>
@@ -101,7 +107,9 @@ namespace HandBrakeWPF.Services.Scan.Model
         /// <summary>
         /// Gets or sets the channel layout of the source track (mixdown)
         /// </summary>
-        public int ChannelLayout { get; set; }
+        public long ChannelLayout { get; set; }
+
+        public string Name { get; set; }
 
         /// <summary>
         /// Override of the ToString method to make this object easier to use in the UI
@@ -182,7 +190,7 @@ namespace HandBrakeWPF.Services.Scan.Model
                 int result = this.TrackNumber;
                 result = (result * 397) ^ (this.Language != null ? this.Language.GetHashCode() : 0);
                 result = (result * 397) ^ (this.LanguageCode != null ? this.LanguageCode.GetHashCode() : 0);
-                result = (result * 397) ^ (this.Codec != null ? this.Codec.GetHashCode() : 0);
+                result = (result * 397) ^ (this.Codec.GetHashCode());
                 return result;
             }
         }

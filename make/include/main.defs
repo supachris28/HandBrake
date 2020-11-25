@@ -7,45 +7,13 @@ include $(SRC/)make/include/tool.defs
 
 ###############################################################################
 
-ifeq (1,$(FEATURE.local_pkgconfig))
-    MODULES += contrib/pkgconfig
-endif
-
-HB_TOOLS_PATH =
-ifeq (1,$(FEATURE.local_cmake))
-    MODULES += contrib/cmake
-    HB_TOOLS_PATH = $(call fn.ABSOLUTE,$(CONTRIB.build/)bin)
-endif
-
-ifeq (1,$(FEATURE.local_autotools))
-    MODULES += contrib/autoconf
-    MODULES += contrib/automake
-    MODULES += contrib/libtool
-    MODULES += contrib/m4
-ifneq (1,$(FEATURE.local_pkgconfig))
-    MODULES += contrib/pkgconfig
-endif
-    AUTOTOOL_MODULES = AUTOCONF AUTOMAKE LIBTOOL M4 PKGCONFIG
-    HB_TOOLS_PATH = $(call fn.ABSOLUTE,$(CONTRIB.build/)bin)
-else
-    AUTOTOOL_MODULES =
-endif
-
-ifneq (,$(HB_TOOLS_PATH))
-    PATH := $(HB_TOOLS_PATH):$(PATH)
-endif
-
-ifneq (,$(filter $(BUILD.system),cygwin mingw))
+ifneq (,$(filter $(HOST.system),cygwin mingw))
 ifneq ($(HAS.bz2),1)
     MODULES += contrib/bzip2
 endif
 endif
 
-ifneq (,$(filter $(BUILD.system),cygwin mingw))
-    MODULES += contrib/fontconfig
-endif
-
-ifneq (,$(filter $(BUILD.system),darwin cygwin mingw))
+ifneq (,$(filter $(HOST.system),darwin cygwin mingw))
     MODULES += contrib/freetype
     MODULES += contrib/fribidi
     MODULES += contrib/harfbuzz
@@ -54,22 +22,18 @@ ifneq (,$(filter $(BUILD.system),darwin cygwin mingw))
     MODULES += contrib/libogg
     MODULES += contrib/libvorbis
     MODULES += contrib/libopus
+    MODULES += contrib/libspeex
     MODULES += contrib/libtheora
-    MODULES += contrib/libsamplerate
     MODULES += contrib/lame
     MODULES += contrib/x264
     MODULES += contrib/jansson
+    MODULES += contrib/libvpx
+    MODULES += contrib/libjpeg-turbo
 endif
 
 ifeq (1,$(FEATURE.flatpak))
-    MODULES += contrib/lame
     MODULES += contrib/jansson
     MODULES += contrib/x264
-    MODULES += contrib/harfbuzz
-    MODULES += contrib/fribidi
-    MODULES += contrib/freetype
-    MODULES += contrib/libass
-    MODULES += contrib/yasm
 endif
 
 ifeq (1,$(FEATURE.fdk_aac))
@@ -78,29 +42,41 @@ endif
 
 ifeq (1,$(FEATURE.x265))
     MODULES += contrib/x265
+    MODULES += contrib/x265_8bit
+    MODULES += contrib/x265_10bit
+    MODULES += contrib/x265_12bit
 endif
 
+MODULES += contrib/libdav1d
 MODULES += contrib/ffmpeg
-MODULES += contrib/libvpx
 MODULES += contrib/libdvdread
 MODULES += contrib/libdvdnav
 MODULES += contrib/libbluray
 
-ifneq (,$(filter $(BUILD.system),mingw))
-ifneq ($(HAS.pthread),1)
-ifneq ($(HAS.pthreadGC2),1)
-    MODULES += contrib/pthreadw32
-endif
-endif
-endif
-
 ifeq (1,$(FEATURE.qsv))
+ifeq (,$(filter $(HOST.system),freebsd))
     MODULES += contrib/libmfx
 endif
+endif
 
-ifneq (,$(filter $(BUILD.system),cygwin mingw))
+ifeq (1,$(FEATURE.vce))
+    MODULES += contrib/amf
+endif
+
+ifeq (1,$(FEATURE.nvenc))
+    MODULES += contrib/nvenc
+endif
+
+ifneq (,$(filter $(HOST.system),darwin))
+    MODULES += contrib/xz
+endif
+
+ifneq (,$(filter $(HOST.system),cygwin mingw))
 ifneq ($(HAS.iconv),1)
     MODULES += contrib/libiconv
+endif
+ifneq ($(HAS.xz),1)
+    MODULES += contrib/xz
 endif
 ifneq ($(HAS.libz),1)
     MODULES += contrib/zlib
@@ -110,7 +86,7 @@ ifneq ($(HAS.regex),1)
 endif
 endif
 
-ifneq (,$(filter $(BUILD.system),solaris))
+ifneq (,$(filter $(HOST.system),solaris))
     MODULES += contrib/libiconv
 endif
 
@@ -120,7 +96,7 @@ MODULES += libhb
 
 ###############################################################################
 
-ifeq (1-darwin,$(FEATURE.xcode)-$(BUILD.system))
+ifeq (1-darwin,$(FEATURE.xcode)-$(HOST.system))
     ## use macosx module when xcode+darwin
     MODULES += macosx
 else
@@ -128,27 +104,33 @@ else
     MODULES += test
 endif
 
-ifeq (1-mingw,$(FEATURE.gtk.mingw)-$(BUILD.system))
+ifeq (1-mingw,$(FEATURE.gtk.mingw)-$(HOST.system))
     MODULES += gtk
 endif
 
-ifeq (1-linux,$(FEATURE.gtk)-$(BUILD.system))
+ifeq (1-linux,$(FEATURE.gtk)-$(HOST.system))
     ## build gtk when gtk+linux
     MODULES += gtk
 endif
 
-ifeq (1-kfreebsd,$(FEATURE.gtk)-$(BUILD.system))
+ifeq (1-freebsd,$(FEATURE.gtk)-$(HOST.system))
+    ## build gtk when gtk+freebsd
+    MODULES += gtk
+endif
+
+ifeq (1-kfreebsd,$(FEATURE.gtk)-$(HOST.system))
     ## build gtk when gtk+kfreebsd
     MODULES += gtk
 endif
 
-ifeq (1-gnu,$(FEATURE.gtk)-$(BUILD.system))
+ifeq (1-gnu,$(FEATURE.gtk)-$(HOST.system))
     ## build gtk when gtk+gnu
     MODULES += gtk
 endif
 
-ifeq (1,$(FEATURE.local_yasm))
-    MODULES += contrib/yasm
+ifeq (1-netbsd,$(FEATURE.gtk)-$(BUILD.system))
+    ## build gtk when gtk+netbsd
+    MODULES += gtk
 endif
 
 ###############################################################################
@@ -158,5 +140,5 @@ MODULES += pkg
 ###############################################################################
 
 include $(MODULES:%=$(SRC/)%/module.defs)
-include $(SRC/)make/variant/$(BUILD.system).defs
--include $(SRC/)make/variant/$(BUILD.system).$(BUILD.machine).defs
+include $(SRC/)make/variant/$(HOST.system).defs
+-include $(SRC/)make/variant/$(HOST.system).$(HOST.machine).defs

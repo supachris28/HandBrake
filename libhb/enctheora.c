@@ -1,13 +1,13 @@
 /* enctheora.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "hb.h"
+#include "handbrake/handbrake.h"
 #include "theora/codec.h"
 #include "theora/theoraenc.h"
 
@@ -47,9 +47,8 @@ int enctheoraInit( hb_work_object_t * w, hb_job_t * job )
     if( job->pass_id == HB_PASS_ENCODE_1ST ||
         job->pass_id == HB_PASS_ENCODE_2ND )
     {
-        char filename[1024];
-        memset( filename, 0, 1024 );
-        hb_get_tempory_filename( job->h, filename, "theroa.log" );
+        char * filename;
+        filename = hb_get_temporary_filename("theroa.log");
         if ( job->pass_id == HB_PASS_ENCODE_1ST )
         {
             pv->file = hb_fopen(filename, "wb");
@@ -58,6 +57,7 @@ int enctheoraInit( hb_work_object_t * w, hb_job_t * job )
         {
             pv->file = hb_fopen(filename, "rb");
         }
+        free(filename);
     }
 
     th_info ti;
@@ -152,7 +152,7 @@ int enctheoraInit( hb_work_object_t * w, hb_job_t * job )
          * We make this call just to set the encoder into 2-pass mode, because
          * by default enabling two-pass sets the buffer delay to the whole file
          * (because there's no way to explicitly request that behavior).
-         * If we waited until we were actually encoding, it would overwite our
+         * If we waited until we were actually encoding, it would overwrite our
          * settings.*/
         hb_log("enctheora: init 2nd pass");
         if( th_encode_ctl( pv->ctx, TH_ENCCTL_2PASS_IN, NULL, 0) < 0)
@@ -189,6 +189,11 @@ int enctheoraInit( hb_work_object_t * w, hb_job_t * job )
 void enctheoraClose( hb_work_object_t * w )
 {
     hb_work_private_t * pv = w->private_data;
+
+    if (pv == NULL)
+    {
+        return;
+    }
 
     th_encode_free( pv->ctx );
 
@@ -231,7 +236,7 @@ int enctheoraWork( hb_work_object_t * w, hb_buffer_t ** buf_in,
             unsigned char *buffer;
             int bytes;
 
-            bytes = th_encode_ctl(pv->ctx, TH_ENCCTL_2PASS_OUT, 
+            bytes = th_encode_ctl(pv->ctx, TH_ENCCTL_2PASS_OUT,
                                   &buffer, sizeof(buffer));
             if( bytes < 0 )
             {
@@ -287,7 +292,7 @@ int enctheoraWork( hb_work_object_t * w, hb_buffer_t ** buf_in,
             /*And pass them off.*/
             if( bytes > pv->stat_fill - pv->stat_read )
                 bytes = pv->stat_fill - pv->stat_read;
-            ret = th_encode_ctl( pv->ctx, TH_ENCCTL_2PASS_IN, 
+            ret = th_encode_ctl( pv->ctx, TH_ENCCTL_2PASS_IN,
                                  pv->stat_buf+pv->stat_read, bytes);
             if( ret < 0 )
             {
@@ -300,7 +305,7 @@ int enctheoraWork( hb_work_object_t * w, hb_buffer_t ** buf_in,
             if( ret >= pv->stat_fill - pv->stat_read )
                 pv->stat_read = pv->stat_fill = 0;
             /*Otherwise remember how much it used.*/
-            else 
+            else
                 pv->stat_read += ret;
         }
     }
@@ -333,7 +338,7 @@ int enctheoraWork( hb_work_object_t * w, hb_buffer_t ** buf_in,
         unsigned char *buffer;
         int bytes;
 
-        bytes = th_encode_ctl(pv->ctx, TH_ENCCTL_2PASS_OUT, 
+        bytes = th_encode_ctl(pv->ctx, TH_ENCCTL_2PASS_OUT,
                               &buffer, sizeof(buffer));
         if( bytes < 0 )
         {

@@ -3,7 +3,7 @@
 //   This file is part of the HandBrake source code - It may be used under the terms of the GNU General Public License.
 // </copyright>
 // <summary>
-//   Encode Progess Status
+//   Encode Progress Status
 // </summary>
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -11,14 +11,14 @@ namespace HandBrakeWPF.Services.Encode.Interfaces
 {
     using System;
 
-    using HandBrake.ApplicationServices.Model;
+    using HandBrake.Interop.Model;
 
     using EncodeCompletedEventArgs = HandBrakeWPF.Services.Encode.EventArgs.EncodeCompletedEventArgs;
     using EncodeProgressEventArgs = HandBrakeWPF.Services.Encode.EventArgs.EncodeProgressEventArgs;
     using EncodeTask = HandBrakeWPF.Services.Encode.Model.EncodeTask;
 
     /// <summary>
-    /// Encode Progess Status
+    /// Encode Progress Status
     /// </summary>
     /// <param name="sender">
     /// The sender.
@@ -29,7 +29,7 @@ namespace HandBrakeWPF.Services.Encode.Interfaces
     public delegate void EncodeProgessStatus(object sender, EncodeProgressEventArgs e);
 
     /// <summary>
-    /// Encode Progess Status
+    /// Encode Progress Status
     /// </summary>
     /// <param name="sender">
     /// The sender.
@@ -78,7 +78,10 @@ namespace HandBrakeWPF.Services.Encode.Interfaces
         /// <param name="configuration">
         /// The configuration.
         /// </param>
-        void Start(EncodeTask job, HBConfiguration configuration);
+        /// <param name="basePresetName">
+        /// Name of the base preset used for logging purposes.
+        /// </param>
+        void Start(EncodeTask job, HBConfiguration configuration, string basePresetName);
 
         /// <summary>
         /// The pause.
@@ -94,5 +97,10 @@ namespace HandBrakeWPF.Services.Encode.Interfaces
         /// Kill the process
         /// </summary>
         void Stop();
+
+        /// <summary>
+        /// Get a copy of the Active job
+        /// </summary>
+        EncodeTask GetActiveJob();
     }
 }

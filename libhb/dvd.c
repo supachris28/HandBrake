@@ -1,21 +1,23 @@
 /* dvd.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "hb.h"
-#include "lang.h"
-#include "dvd.h"
+#include "libavcodec/avcodec.h"
+
+#include "handbrake/handbrake.h"
+#include "handbrake/lang.h"
+#include "handbrake/dvd.h"
 
 #include "dvdread/ifo_read.h"
 #include "dvdread/ifo_print.h"
 #include "dvdread/nav_read.h"
 
-static hb_dvd_t    * hb_dvdread_init( hb_handle_t * h, char * path );
+static hb_dvd_t    * hb_dvdread_init( hb_handle_t * h, const char * path );
 static void          hb_dvdread_close( hb_dvd_t ** _d );
 static char        * hb_dvdread_name( char * path );
 static int           hb_dvdread_title_count( hb_dvd_t * d );
@@ -106,7 +108,7 @@ static char * hb_dvdread_name( char * path )
  ***********************************************************************
  *
  **********************************************************************/
-hb_dvd_t * hb_dvdread_init( hb_handle_t * h, char * path )
+hb_dvd_t * hb_dvdread_init( hb_handle_t * h, const char * path )
 {
     hb_dvd_t * e;
     hb_dvdread_t * d;
@@ -173,6 +175,133 @@ static int hb_dvdread_title_count( hb_dvd_t * e )
     return d->vmg->tt_srpt->nr_of_srpts;
 }
 
+static void add_subtitle( hb_list_t * list_subtitle, int position,
+                          iso639_lang_t * lang, int lang_extension,
+                          uint8_t * palette, int style )
+{
+    hb_subtitle_t * subtitle;
+    int ii, count;
+
+    count = hb_list_count(list_subtitle);
+    for (ii = 0; ii < count; ii++)
+    {
+        subtitle = hb_list_item(list_subtitle, ii);
+        if (((subtitle->id >> 8) & 0x1f) == position)
+        {
+            // The subtitle is already in the list
+            return;
+        }
+    }
+
+    subtitle        = calloc(sizeof(hb_subtitle_t), 1);
+    subtitle->track = count;
+    subtitle->id    = ((0x20 + position) << 8) | 0xbd;
+    snprintf(subtitle->lang, sizeof( subtitle->lang ), "%s",
+             strlen(lang->native_name) ? lang->native_name : lang->eng_name);
+    snprintf(subtitle->iso639_2, sizeof( subtitle->iso639_2 ), "%s",
+             lang->iso639_2);
+    subtitle->format         = PICTURESUB;
+    subtitle->source         = VOBSUB;
+    subtitle->config.dest    = RENDERSUB;
+    subtitle->stream_type    = 0xbd;
+    subtitle->substream_type = 0x20 + position;
+    subtitle->codec          = WORK_DECAVSUB;
+    subtitle->codec_param    = AV_CODEC_ID_DVD_SUBTITLE;
+    subtitle->timebase.num   = 1;
+    subtitle->timebase.den   = 90000;
+
+    memcpy(subtitle->palette, palette, 16 * sizeof(uint32_t));
+    subtitle->palette_set = 1;
+
+    const char * name = NULL;
+    switch (lang_extension)
+    {
+        case 1:
+            subtitle->attributes = HB_SUBTITLE_ATTR_NORMAL;
+            break;
+        case 2:
+            subtitle->attributes = HB_SUBTITLE_ATTR_LARGE;
+            strcat(subtitle->lang, " Large Type");
+            name = "Large Type";
+            break;
+        case 3:
+            subtitle->attributes = HB_SUBTITLE_ATTR_CHILDREN;
+            strcat(subtitle->lang, " Children");
+            name = "Children";
+            break;
+        case 5:
+            subtitle->attributes = HB_SUBTITLE_ATTR_CC;
+            strcat(subtitle->lang, " Closed Caption");
+            name = "Closed Caption";
+            break;
+        case 6:
+            subtitle->attributes = HB_SUBTITLE_ATTR_CC | HB_SUBTITLE_ATTR_LARGE;
+            strcat(subtitle->lang, " Closed Caption, Large Type");
+            name = "Closed Caption, Large Type";
+            break;
+        case 7:
+            subtitle->attributes = HB_SUBTITLE_ATTR_CC |
+                                   HB_SUBTITLE_ATTR_CHILDREN;
+            strcat(subtitle->lang, " Closed Caption, Children");
+            name = "Closed Caption, Children";
+            break;
+        case 9:
+            subtitle->attributes = HB_SUBTITLE_ATTR_FORCED;
+            strcat(subtitle->lang, " Forced");
+            break;
+        case 13:
+            subtitle->attributes = HB_SUBTITLE_ATTR_COMMENTARY;
+            strcat(subtitle->lang, " Director's Commentary");
+            name = "Commentary";
+            break;
+        case 14:
+            subtitle->attributes = HB_SUBTITLE_ATTR_COMMENTARY |
+                                   HB_SUBTITLE_ATTR_LARGE;
+            strcat(subtitle->lang, " Director's Commentary, Large Type");
+            name = "Commentary, Large Type";
+            break;
+        case 15:
+            subtitle->attributes = HB_SUBTITLE_ATTR_COMMENTARY |
+                                   HB_SUBTITLE_ATTR_CHILDREN;
+            strcat(subtitle->lang, " Director's Commentary, Children");
+            name = "Commentary, Children";
+        default:
+            subtitle->attributes = HB_SUBTITLE_ATTR_UNKNOWN;
+            break;
+    }
+    if (name != NULL)
+    {
+        subtitle->name = strdup(name);
+    }
+    switch (style)
+    {
+        case HB_VOBSUB_STYLE_4_3:
+            subtitle->attributes |= HB_SUBTITLE_ATTR_4_3;
+            strcat(subtitle->lang, " (4:3)");
+            break;
+        case HB_VOBSUB_STYLE_WIDE:
+            subtitle->attributes |= HB_SUBTITLE_ATTR_WIDE;
+            strcat(subtitle->lang, " (Wide Screen)");
+            break;
+        case HB_VOBSUB_STYLE_LETTERBOX:
+            subtitle->attributes |= HB_SUBTITLE_ATTR_LETTERBOX;
+            strcat(subtitle->lang, " (Letterbox)");
+            break;
+        case HB_VOBSUB_STYLE_PANSCAN:
+            subtitle->attributes |= HB_SUBTITLE_ATTR_PANSCAN;
+            strcat(subtitle->lang, " (Pan & Scan)");
+            break;
+    }
+    strcat(subtitle->lang, " [");
+    strcat(subtitle->lang, hb_subsource_name(subtitle->source));
+    strcat(subtitle->lang, "]");
+
+    hb_log("scan: id=0x%x, lang=%s, 3cc=%s ext=%i", subtitle->id,
+           subtitle->lang, subtitle->iso639_2, lang_extension);
+
+    hb_list_add(list_subtitle, subtitle);
+}
+
 /***********************************************************************
  * hb_dvdread_title_scan
  **********************************************************************/
@@ -184,6 +313,7 @@ static hb_title_t * hb_dvdread_title_scan( hb_dvd_t * e, int t, uint64_t min_dur
     ifo_handle_t * vts = NULL;
     int            pgc_id, pgn, i;
     hb_chapter_t * chapter;
+    char           name[1024];
     unsigned char  unused[1024];
     const char   * codec_name;
 
@@ -192,8 +322,7 @@ static hb_title_t * hb_dvdread_title_scan( hb_dvd_t * e, int t, uint64_t min_dur
     title = hb_title_init( d->path, t );
     title->type = HB_DVD_TYPE;
 
-    if( DVDUDFVolumeInfo( d->reader, title->name, sizeof( title->name ),
-                          unused, sizeof( unused ) ) )
+    if( DVDUDFVolumeInfo(d->reader, name, sizeof(name), unused, sizeof(unused)))
     {
         char * p_cur, * p_last = d->path;
         for( p_cur = d->path; *p_cur; p_cur++ )
@@ -203,24 +332,28 @@ static hb_title_t * hb_dvdread_title_scan( hb_dvd_t * e, int t, uint64_t min_dur
                 p_last = &p_cur[1];
             }
         }
-        snprintf( title->name, sizeof( title->name ), "%s", p_last );
+        title->name = strdup(p_last);
         char *dot_term = strrchr(title->name, '.');
         if (dot_term)
             *dot_term = '\0';
     }
+    else
+    {
+        title->name = strdup(name);
+    }
 
     /* VTS which our title is in */
-    title->vts = d->vmg->tt_srpt->title[t-1].title_set_nr;
+    int title_vts = d->vmg->tt_srpt->title[t-1].title_set_nr;
 
-    if ( !title->vts )
+    if ( !title_vts )
     {
         /* A VTS of 0 means the title wasn't found in the title set */
-        hb_log("Invalid VTS (title set) number: %i", title->vts);
+        hb_log("Invalid VTS (title set) number: %i", title_vts);
         goto fail;
     }
 
-    hb_log( "scan: opening IFO for VTS %d", title->vts );
-    if( !( vts = ifoOpen( d->reader, title->vts ) ) )
+    hb_log( "scan: opening IFO for VTS %d", title_vts );
+    if( !( vts = ifoOpen( d->reader, title_vts ) ) )
     {
         hb_log( "scan: ifoOpen failed" );
         goto fail;
@@ -259,25 +392,25 @@ static hb_title_t * hb_dvdread_title_scan( hb_dvd_t * e, int t, uint64_t min_dur
 
     if( global_verbosity_level == 3 )
     {
-        ifo_print( d->reader, title->vts );
+        ifo_print( d->reader, title_vts );
     }
 
     /* Position of the title in the VTS */
-    title->ttn = d->vmg->tt_srpt->title[t-1].vts_ttn;
-    if ( title->ttn < 1 || title->ttn > vts->vts_ptt_srpt->nr_of_srpts )
+    int title_ttn = d->vmg->tt_srpt->title[t-1].vts_ttn;
+    if ( title_ttn < 1 || title_ttn > vts->vts_ptt_srpt->nr_of_srpts )
     {
-        hb_log( "invalid VTS PTT offset %d for title %d, skipping", title->ttn, t );
+        hb_log( "invalid VTS PTT offset %d for title %d, skipping", title_ttn, t );
         goto fail;
     }
 
     /* Get pgc */
-    pgc_id = vts->vts_ptt_srpt->title[title->ttn-1].ptt[0].pgcn;
+    pgc_id = vts->vts_ptt_srpt->title[title_ttn-1].ptt[0].pgcn;
     if ( pgc_id < 1 || pgc_id > vts->vts_pgcit->nr_of_pgci_srp )
     {
         hb_log( "invalid PGC ID %d for title %d, skipping", pgc_id, t );
         goto fail;
     }
-    pgn    = vts->vts_ptt_srpt->title[title->ttn-1].ptt[0].pgn;
+    pgn    = vts->vts_ptt_srpt->title[title_ttn-1].ptt[0].pgn;
     d->pgc = vts->vts_pgcit->pgci_srp[pgc_id-1].pgc;
 
     hb_log("pgc_id: %d, pgn: %d: pgc: %p", pgc_id, pgn, d->pgc);
@@ -299,31 +432,6 @@ static hb_title_t * hb_dvdread_title_scan( hb_dvd_t * e, int t, uint64_t min_dur
         hb_log( "scan: pgn %d not valid, skipping", pgn );
         goto fail;
     }
-
-    /* Start cell */
-    title->cell_start  = d->pgc->program_map[pgn-1] - 1;
-    title->block_start = d->pgc->cell_playback[title->cell_start].first_sector;
-
-    /* End cell */
-    title->cell_end  = d->pgc->nr_of_cells - 1;
-    title->block_end = d->pgc->cell_playback[title->cell_end].last_sector;
-
-    /* Block count */
-    title->block_count = 0;
-    d->cell_cur = title->cell_start;
-    while( d->cell_cur <= title->cell_end )
-    {
-#define cp d->pgc->cell_playback[d->cell_cur]
-        title->block_count += cp.last_sector + 1 - cp.first_sector;
-#undef cp
-        FindNextCell( d );
-        d->cell_cur = d->cell_next;
-    }
-
-    hb_log( "scan: vts=%d, ttn=%d, cells=%d->%d, blocks=%"PRIu64"->%"PRIu64", "
-            "%"PRIu64" blocks", title->vts, title->ttn, title->cell_start,
-            title->cell_end, title->block_start, title->block_end,
-            title->block_count );
 
     /* Get duration */
     title->duration = 90LL * dvdtime2msec( &d->pgc->playback_time );
@@ -432,7 +540,32 @@ static hb_title_t * hb_dvdread_title_scan( hb_dvd_t * e, int t, uint64_t min_dur
 
         lang = lang_for_code( lang_code );
 
-        audio->config.lang.type = lang_extension;
+        const char * name = NULL;
+        switch ( lang_extension )
+        {
+            case 1:
+                audio->config.lang.attributes = HB_AUDIO_ATTR_NORMAL;
+                break;
+            case 2:
+                audio->config.lang.attributes = HB_AUDIO_ATTR_VISUALLY_IMPAIRED;
+                name = "Visually Impaired";
+                break;
+            case 3:
+                audio->config.lang.attributes = HB_AUDIO_ATTR_COMMENTARY;
+                name = "Commentary";
+                break;
+            case 4:
+                audio->config.lang.attributes = HB_AUDIO_ATTR_ALT_COMMENTARY;
+                name = "Commentary";
+                break;
+            default:
+                audio->config.lang.attributes = HB_AUDIO_ATTR_NONE;
+                break;
+        }
+        if (name != NULL)
+        {
+            audio->config.in.name = strdup(name);
+        }
 
         snprintf( audio->config.lang.simple,
                   sizeof( audio->config.lang.simple ), "%s",
@@ -444,21 +577,27 @@ static hb_title_t * hb_dvdread_title_scan( hb_dvd_t * e, int t, uint64_t min_dur
                audio->config.lang.simple, codec_name,
                audio->config.lang.iso639_2, lang_extension);
 
-        audio->config.in.track = i;
+        audio->config.in.track        = i;
+        audio->config.in.timebase.num = 1;
+        audio->config.in.timebase.den = 90000;
+
         hb_list_add( title->list_audio, audio );
     }
 
     /* Check for subtitles */
     for( i = 0; i < vts->vtsi_mat->nr_of_vts_subp_streams; i++ )
     {
-        hb_subtitle_t * subtitle;
-        int spu_control;
-        int position;
+        int             spu_control, pos, lang_ext = 0;
         iso639_lang_t * lang;
-        int lang_extension = 0;
 
         hb_log( "scan: checking subtitle %d", i + 1 );
 
+        // spu_control
+        // 0x80000000 - Subtitle enabled
+        // 0x1f000000 - Position mask for 4:3 aspect subtitle track
+        // 0x001f0000 - Position mask for Wide Screen subtitle track
+        // 0x00001f00 - Position mask for Letterbox subtitle track
+        // 0x0000001f - Position mask for Pan&Scan subtitle track
         spu_control =
             vts->vts_pgcit->pgci_srp[pgc_id-1].pgc->subp_control[i];
 
@@ -468,93 +607,56 @@ static hb_title_t * hb_dvdread_title_scan( hb_dvd_t * e, int t, uint64_t min_dur
             continue;
         }
 
-        if( vts->vtsi_mat->vts_video_attr.display_aspect_ratio )
+        lang_ext = vts->vtsi_mat->vts_subp_attr[i].code_extension;
+        lang     = lang_for_code(vts->vtsi_mat->vts_subp_attr[i].lang_code);
+
+        // display_aspect_ratio
+        // 0     = 4:3
+        // 3     = 16:9
+        // other = invalid
+        if (vts->vtsi_mat->vts_video_attr.display_aspect_ratio)
         {
-            switch( vts->vtsi_mat->vts_video_attr.permitted_df )
+            // Add Wide Screen subtitle.
+            pos = (spu_control >> 16) & 0x1F;
+            add_subtitle(title->list_subtitle, pos, lang, lang_ext,
+                (uint8_t*)vts->vts_pgcit->pgci_srp[pgc_id-1].pgc->palette,
+                HB_VOBSUB_STYLE_WIDE);
+
+            // permitted_df
+            // 1 - Letterbox not permitted
+            // 2 - Pan&Scan not permitted
+            // 3 - Letterbox and Pan&Scan not permitted
+            if (!(vts->vtsi_mat->vts_video_attr.permitted_df & 1))
             {
-                case 1:
-                    position = spu_control & 0xFF;
-                    break;
-                case 2:
-                    position = ( spu_control >> 8 ) & 0xFF;
-                    break;
-                default:
-                    position = ( spu_control >> 16 ) & 0xFF;
+                // Letterbox permitted.  Add Letterbox subtitle.
+                pos = (spu_control >> 8) & 0x1F;
+                add_subtitle(title->list_subtitle, pos, lang, lang_ext,
+                    (uint8_t*)vts->vts_pgcit->pgci_srp[pgc_id-1].pgc->palette,
+                    HB_VOBSUB_STYLE_LETTERBOX);
+            }
+            if (!(vts->vtsi_mat->vts_video_attr.permitted_df & 2))
+            {
+                // Pan&Scan permitted.  Add Pan&Scan subtitle.
+                pos = spu_control & 0x1F;
+                add_subtitle(title->list_subtitle, pos, lang, lang_ext,
+                    (uint8_t*)vts->vts_pgcit->pgci_srp[pgc_id-1].pgc->palette,
+                    HB_VOBSUB_STYLE_PANSCAN);
             }
         }
         else
         {
-            position = ( spu_control >> 24 ) & 0x7F;
+            pos = (spu_control >> 24) & 0x1F;
+            add_subtitle(title->list_subtitle, pos, lang, lang_ext,
+                (uint8_t*)vts->vts_pgcit->pgci_srp[pgc_id-1].pgc->palette,
+                HB_VOBSUB_STYLE_4_3);
         }
-
-        lang_extension = vts->vtsi_mat->vts_subp_attr[i].code_extension;
-
-        lang = lang_for_code( vts->vtsi_mat->vts_subp_attr[i].lang_code );
-
-        subtitle = calloc( sizeof( hb_subtitle_t ), 1 );
-        subtitle->track = i;
-        subtitle->id = ( ( 0x20 + position ) << 8 ) | 0xbd;
-        snprintf( subtitle->lang, sizeof( subtitle->lang ), "%s",
-             strlen(lang->native_name) ? lang->native_name : lang->eng_name);
-        snprintf( subtitle->iso639_2, sizeof( subtitle->iso639_2 ), "%s",
-                  lang->iso639_2);
-        subtitle->format = PICTURESUB;
-        subtitle->source = VOBSUB;
-        subtitle->config.dest   = RENDERSUB;  // By default render (burn-in) the VOBSUB.
-        subtitle->stream_type = 0xbd;
-        subtitle->substream_type = 0x20 + position;
-        subtitle->codec = WORK_DECVOBSUB;
-
-        subtitle->type = lang_extension;
-        
-        memcpy( subtitle->palette,
-            vts->vts_pgcit->pgci_srp[pgc_id-1].pgc->palette,
-            16 * sizeof( uint32_t ) );
-        subtitle->palette_set = 1;
-
-        switch( lang_extension )
-        {  
-            case 2:
-                strcat( subtitle->lang, " (Caption with bigger size character)" );
-                break;
-            case 3: 
-                strcat( subtitle->lang, " (Caption for Children)" );
-                break;
-            case 5:
-                strcat( subtitle->lang, " (Closed Caption)" );
-                break;
-            case 6:
-                strcat( subtitle->lang, " (Closed Caption with bigger size character)" );
-                break;
-            case 7:
-                strcat( subtitle->lang, " (Closed Caption for Children)" );
-                break;
-            case 9:
-                strcat( subtitle->lang, " (Forced Caption)" );
-                break;
-            case 13:
-                strcat( subtitle->lang, " (Director's Commentary)" );
-                break;
-            case 14:
-                strcat( subtitle->lang, " (Director's Commentary with bigger size character)" );
-                break;
-            case 15:
-                strcat( subtitle->lang, " (Director's Commentary for Children)" );
-            default:
-                break;
-        }
-
-        hb_log( "scan: id=0x%x, lang=%s, 3cc=%s ext=%i", subtitle->id,
-                subtitle->lang, subtitle->iso639_2, lang_extension );
-
-        hb_list_add( title->list_subtitle, subtitle );
     }
 
     /* Chapters */
     hb_log( "scan: title %d has %d chapters", t,
-            vts->vts_ptt_srpt->title[title->ttn-1].nr_of_ptts );
+            vts->vts_ptt_srpt->title[title_ttn-1].nr_of_ptts );
     for( i = 0;
-         i < vts->vts_ptt_srpt->title[title->ttn-1].nr_of_ptts; i++ )
+         i < vts->vts_ptt_srpt->title[title_ttn-1].nr_of_ptts; i++ )
     {
         char chapter_title[80];
         chapter = calloc( sizeof( hb_chapter_t ), 1 );
@@ -564,37 +666,34 @@ static hb_title_t * hb_dvdread_title_scan( hb_dvd_t * e, int t, uint64_t min_dur
         sprintf( chapter_title, "Chapter %d", chapter->index );
         hb_chapter_set_title( chapter, chapter_title );
 
-        pgc_id = vts->vts_ptt_srpt->title[title->ttn-1].ptt[i].pgcn;
-        pgn    = vts->vts_ptt_srpt->title[title->ttn-1].ptt[i].pgn;
+        pgc_id = vts->vts_ptt_srpt->title[title_ttn-1].ptt[i].pgcn;
+        pgn    = vts->vts_ptt_srpt->title[title_ttn-1].ptt[i].pgn;
         d->pgc = vts->vts_pgcit->pgci_srp[pgc_id-1].pgc;
 
         /* Start cell */
-        chapter->cell_start  = d->pgc->program_map[pgn-1] - 1;
-        chapter->block_start =
-            d->pgc->cell_playback[chapter->cell_start].first_sector;
+        int cell_start, cell_end;
+
+        cell_start = d->pgc->program_map[pgn-1] - 1;
 
         // if there are no more programs in this pgc, the end cell is the
         // last cell. Otherwise it's the cell before the start cell of the
         // next program.
         if ( pgn == d->pgc->nr_of_programs )
         {
-            chapter->cell_end = d->pgc->nr_of_cells - 1;
+            cell_end = d->pgc->nr_of_cells - 1;
         }
         else
         {
-            chapter->cell_end = d->pgc->program_map[pgn] - 2;;
+            cell_end = d->pgc->program_map[pgn] - 2;;
         }
-        chapter->block_end = d->pgc->cell_playback[chapter->cell_end].last_sector;
 
         /* Block count, duration */
-        chapter->block_count = 0;
         chapter->duration = 0;
 
-        d->cell_cur = chapter->cell_start;
-        while( d->cell_cur <= chapter->cell_end )
+        d->cell_cur = cell_start;
+        while( d->cell_cur <= cell_end )
         {
 #define cp d->pgc->cell_playback[d->cell_cur]
-            chapter->block_count += cp.last_sector + 1 - cp.first_sector;
             chapter->duration += 90LL * dvdtime2msec( &cp.playback_time );
 #undef cp
             FindNextCell( d );
@@ -613,10 +712,8 @@ static hb_title_t * hb_dvdread_title_scan( hb_dvd_t * e, int t, uint64_t min_dur
         chapter->minutes  = ( seconds % 3600 ) / 60;
         chapter->seconds  = ( seconds % 60 );
 
-        hb_log( "scan: chap %d c=%d->%d, b=%"PRIu64"->%"PRIu64" (%"PRIu64"), %"PRId64" ms",
-                chapter->index, chapter->cell_start, chapter->cell_end,
-                chapter->block_start, chapter->block_end,
-                chapter->block_count, chapter->duration / 90 );
+        hb_log( "scan: chap %d, %"PRId64" ms",
+                chapter->index, chapter->duration / 90 );
     }
 
     /* Get aspect. We don't get width/height/rate infos here as
@@ -634,6 +731,24 @@ static hb_title_t * hb_dvdread_title_scan( hb_dvd_t * e, int t, uint64_t min_dur
         default:
             hb_log( "scan: unknown aspect" );
             goto fail;
+    }
+
+    switch( vts->vtsi_mat->vts_video_attr.mpeg_version )
+    {
+        case 0:
+            title->video_codec       = WORK_DECAVCODECV;
+            title->video_codec_param = AV_CODEC_ID_MPEG1VIDEO;
+            break;
+        case 1:
+            title->video_codec       = WORK_DECAVCODECV;
+            title->video_codec_param = AV_CODEC_ID_MPEG2VIDEO;
+            break;
+        default:
+            hb_log("scan: unknown/reserved MPEG version %d",
+                    vts->vtsi_mat->vts_video_attr.mpeg_version);
+            title->video_codec       = WORK_DECAVCODECV;
+            title->video_codec_param = AV_CODEC_ID_MPEG2VIDEO;
+            break;
     }
 
     hb_log("scan: aspect = %d:%d",
@@ -869,8 +984,8 @@ static hb_buffer_t * hb_dvdread_read( hb_dvd_t * e )
                         continue;
                     }
                     break;
-                } else {  
-                    // First retry the same block, then try the next one, 
+                } else {
+                    // First retry the same block, then try the next one,
                     // adjust the skip increment upwards so that we can skip
                     // large sections of bad blocks more efficiently (at the
                     // cost of some missed good blocks at the end).
@@ -878,7 +993,7 @@ static hb_buffer_t * hb_dvdread_read( hb_dvd_t * e )
                             d->next_vobu, (read_retry * 10));
                     d->next_vobu += (read_retry * 10);
                 }
-                
+
             }
 
             if( read_retry == 1024 )
@@ -907,7 +1022,7 @@ static hb_buffer_t * hb_dvdread_read( hb_dvd_t * e )
                     hb_log("dvd: Lost sync, searching for NAV pack at blk %d",
                            d->next_vobu);
                     d->in_sync = 0;
-                } 
+                }
                 continue;
             }
 
@@ -1039,8 +1154,8 @@ static hb_buffer_t * hb_dvdread_read( hb_dvd_t * e )
             {
                 if ( d->block != d->pgc->cell_playback[d->cell_cur].first_sector )
                 {
-                    hb_log( "dvd: beginning of cell %d at block %d", d->cell_cur,
-                           d->block );
+                    hb_deep_log(3, "dvd: beginning of cell %d at block %d", d->cell_cur,
+                           d->block);
                 }
                 if( d->in_cell )
                 {
@@ -1066,8 +1181,8 @@ static hb_buffer_t * hb_dvdread_read( hb_dvd_t * e )
             if ( d->block <= d->pgc->cell_playback[d->cell_cur].first_sector ||
                  d->block > d->pgc->cell_playback[d->cell_cur].last_sector )
             {
-                hb_log( "dvd: end of cell %d at block %d", d->cell_cur,
-                        d->block );
+                hb_deep_log(3, "dvd: end of cell %d at block %d", d->cell_cur,
+                        d->block);
             }
             d->cell_cur  = d->cell_next;
             d->in_cell = 0;
@@ -1188,6 +1303,7 @@ static void hb_dvdread_close( hb_dvd_t ** _d )
         DVDClose( d->reader );
     }
 
+    free( d->path );
     free( d );
     *_d = NULL;
 }
@@ -1270,7 +1386,7 @@ char * hb_dvd_name( char * path )
     return dvd_methods->name(path);
 }
 
-hb_dvd_t * hb_dvd_init( hb_handle_t * h, char * path )
+hb_dvd_t * hb_dvd_init( hb_handle_t * h, const char * path )
 {
     return dvd_methods->init(h, path);
 }

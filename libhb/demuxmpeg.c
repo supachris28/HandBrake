@@ -1,13 +1,13 @@
 /* demuxmpeg.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "hb.h"
+#include "handbrake/handbrake.h"
 
 static inline int check_mpeg_scr( hb_psdemux_t *state, int64_t scr, int tol )
 {
@@ -222,10 +222,11 @@ static void demux_dvd_ps( hb_buffer_t * buf, hb_buffer_list_t * list_es,
             /* Here we hit we ES payload */
             buf_es = hb_buffer_init( pes_packet_end - pos );
 
-            buf_es->s.id       = id;
-            buf_es->s.start    = pts;
+            buf_es->s.id           = id;
+            buf_es->s.start        = pts;
             buf_es->s.renderOffset = dts;
-            buf_es->s.stop     = AV_NOPTS_VALUE;
+            buf_es->s.duration     = (int64_t)AV_NOPTS_VALUE;
+            buf_es->s.stop         = AV_NOPTS_VALUE;
             if ( state && id == 0xE0)
             {
                 // Consume a chapter break, and apply it to the ES.
@@ -265,7 +266,7 @@ static void demux_mpeg( hb_buffer_t *buf, hb_buffer_list_t *list_es,
                 // we have a new pcr
                 discontinuity = check_mpeg_scr( state, buf->s.pcr, tolerance );
                 buf->s.pcr = AV_NOPTS_VALUE;
-                // Some streams have consistantly bad PCRs or SCRs
+                // Some streams have consistently bad PCRs or SCRs
                 // So filter out the offset
                 if ( buf->s.start >= 0 )
                     state->scr_delta = buf->s.start - state->last_scr;

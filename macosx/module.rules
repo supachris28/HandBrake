@@ -32,6 +32,11 @@ macosx.install: test.install
 macosx.uninstall: test.uninstall
 
 macosx.clean:
+	$(RM.exe) -rf $(MACOSX.xroot/)HandBrake/
+	$(RM.exe) -rf $(MACOSX.xroot/)HandBrake.app
+	$(RM.exe) -f $(MACOSX.xroot/)HandBrakeCLI
+	$(RM.exe) -f $(MACOSX.xroot/)hbsign.log
+	$(RM.exe) -f $(MACOSX.xroot/)hbnotarize.log
 	$(RM.exe) -f $(MACOSX.m4.out)
 	$(RM.exe) -f $(MACOSX.osl.filelist)
 

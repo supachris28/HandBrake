@@ -9,8 +9,8 @@
 #import "HBCodingUtilities.h"
 #import "HBMutablePreset.h"
 
-#import "hb.h"
-#import "lang.h"
+#import "handbrake/handbrake.h"
+#import "handbrake/lang.h"
 
 @interface HBAudioDefaults ()
 
@@ -106,6 +106,15 @@
     _allowDTSPassthru = allowDTSPassthru;
 }
 
+- (void)setAllowMP2Passthru:(BOOL)allowMP2Passthru
+{
+    if (allowMP2Passthru != _allowMP2Passthru)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setAllowMP2Passthru:_allowMP2Passthru];
+    }
+    _allowMP2Passthru = allowMP2Passthru;
+}
+
 - (void)setAllowMP3Passthru:(BOOL)allowMP3Passthru
 {
     if (allowMP3Passthru != _allowMP3Passthru)
@@ -164,7 +173,7 @@
          audio_encoder  = hb_audio_encoder_get_next(audio_encoder))
     {
         if ((audio_encoder->codec  & HB_ACODEC_PASS_FLAG) == 0 &&
-            (audio_encoder->muxers & self.container))
+            ((audio_encoder->muxers & self.container) || audio_encoder->codec == HB_ACODEC_NONE))
         {
             [fallbacks addObject:@(audio_encoder->name)];
         }
@@ -204,6 +213,7 @@
     self.allowDTSHDPassthru  = NO;
     self.allowEAC3Passthru   = NO;
     self.allowFLACPassthru   = NO;
+    self.allowMP2Passthru    = NO;
     self.allowMP3Passthru    = NO;
     self.allowTrueHDPassthru = NO;
 
@@ -232,6 +242,9 @@
                     break;
                 case HB_ACODEC_FLAC_PASS:
                     self.allowFLACPassthru = YES;
+                    break;
+                case HB_ACODEC_MP2_PASS:
+                    self.allowMP2Passthru = YES;
                     break;
                 case HB_ACODEC_MP3_PASS:
                     self.allowMP3Passthru = YES;
@@ -333,6 +346,10 @@
     {
         [copyMask addObject:@(hb_audio_encoder_get_short_name(HB_ACODEC_DCA_PASS))];
     }
+    if (self.allowMP2Passthru)
+    {
+        [copyMask addObject:@(hb_audio_encoder_get_short_name(HB_ACODEC_MP2_PASS))];
+    }
     if (self.allowMP3Passthru)
     {
         [copyMask addObject:@(hb_audio_encoder_get_short_name(HB_ACODEC_MP3_PASS))];
@@ -422,6 +439,7 @@
         copy->_allowEAC3Passthru = _allowEAC3Passthru;
         copy->_allowDTSHDPassthru = _allowDTSHDPassthru;
         copy->_allowDTSPassthru = _allowDTSPassthru;
+        copy->_allowMP2Passthru = _allowMP2Passthru;
         copy->_allowMP3Passthru = _allowMP3Passthru;
         copy->_allowTrueHDPassthru = _allowTrueHDPassthru;
         copy->_allowFLACPassthru = _allowFLACPassthru;
@@ -430,7 +448,7 @@
         copy->_container = _container;
         copy->_secondaryEncoderMode = _secondaryEncoderMode;
     }
-    
+
     return copy;
 }
 
@@ -455,6 +473,7 @@
     encodeBool(_allowEAC3Passthru);
     encodeBool(_allowDTSHDPassthru);
     encodeBool(_allowDTSPassthru);
+    encodeBool(_allowMP2Passthru);
     encodeBool(_allowMP3Passthru);
     encodeBool(_allowTrueHDPassthru);
     encodeBool(_allowFLACPassthru);
@@ -469,24 +488,32 @@
     self = [super init];
 
     decodeInteger(_trackSelectionBehavior);
-    decodeObject(_trackSelectionLanguages, NSMutableArray);
+    if (_trackSelectionBehavior < HBAudioTrackSelectionBehaviorNone || _trackSelectionBehavior > HBAudioTrackSelectionBehaviorAll)
+    {
+        goto fail;
+    }
 
-    decodeCollectionOfObjects(_tracksArray, NSMutableArray, HBAudioTrackPreset);
+    decodeCollectionOfObjectsOrFail(_trackSelectionLanguages, NSMutableArray, NSString);
+    decodeCollectionOfObjectsOrFail(_tracksArray, NSMutableArray, HBAudioTrackPreset);
 
     decodeBool(_allowAACPassthru);
     decodeBool(_allowAC3Passthru);
     decodeBool(_allowEAC3Passthru);
     decodeBool(_allowDTSHDPassthru);
     decodeBool(_allowDTSPassthru);
+    decodeBool(_allowMP2Passthru);
     decodeBool(_allowMP3Passthru);
     decodeBool(_allowTrueHDPassthru);
     decodeBool(_allowFLACPassthru);
 
-    decodeInt(_encoderFallback);
-    decodeInt(_container);
+    decodeInt(_encoderFallback); if (_encoderFallback < 0) { goto fail; }
+    decodeInt(_container); if (_container != HB_MUX_MP4 && _container != HB_MUX_MKV && _container != HB_MUX_WEBM) { goto fail; }
     decodeBool(_secondaryEncoderMode);
 
     return self;
+
+fail:
+    return nil;
 }
 
 #pragma mark KVC
@@ -501,7 +528,7 @@
     return self.tracksArray[index];
 }
 
-- (void)insertObject:(HBAudioTrackPreset *)track inTracksArrayAtIndex:(NSUInteger)index;
+- (void)insertObject:(HBAudioTrackPreset *)track inTracksArrayAtIndex:(NSUInteger)index
 {
     [[self.undo prepareWithInvocationTarget:self] removeObjectFromTracksArrayAtIndex:index];
     [self.tracksArray insertObject:track atIndex:index];

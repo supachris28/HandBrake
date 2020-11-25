@@ -6,16 +6,15 @@
 
 #import <Cocoa/Cocoa.h>
 
-@class HBAdvancedController;
 @class HBVideo;
 
-/**
- *  HBVideoController
- */
-@interface HBVideoController : NSViewController
+NS_ASSUME_NONNULL_BEGIN
 
-- (instancetype)initWithAdvancedController:(HBAdvancedController *)advancedController;
+@interface HBVideoController : NSViewController
 
 @property (nonatomic, readwrite, weak) HBVideo *video;
 
 @end
+
+NS_ASSUME_NONNULL_END
+

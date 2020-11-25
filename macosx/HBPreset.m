@@ -7,9 +7,10 @@
 #import "HBPreset.h"
 #import "HBMutablePreset.h"
 
-#include "preset.h"
+#include "handbrake/preset.h"
 
 #import "NSJSONSerialization+HBAdditions.h"
+#import "HBLocalizationUtilities.h"
 
 @interface HBPreset ()
 
@@ -52,7 +53,7 @@
     return self;
 }
 
-- (instancetype)initWithName:(NSString *)title content:(NSDictionary *)content builtIn:(BOOL)builtIn;
+- (instancetype)initWithName:(NSString *)title content:(NSDictionary *)content builtIn:(BOOL)builtIn
 {
     self = [self init];
     if (self)
@@ -68,7 +69,7 @@
     return self;
 }
 
-- (instancetype)initWithFolderName:(NSString *)title builtIn:(BOOL)builtIn;
+- (instancetype)initWithCategoryName:(NSString *)title builtIn:(BOOL)builtIn
 {
     self = [self init];
     if (self)
@@ -90,7 +91,7 @@
 
     if ([dict[@"Folder"] boolValue])
     {
-        self = [self initWithFolderName:name builtIn:builtIn];
+        self = [self initWithCategoryName:name builtIn:builtIn];
 
         for (NSDictionary *childDict in [dict[@"ChildrenArray"] reverseObjectEnumerator])
         {
@@ -109,7 +110,7 @@
     return self;
 }
 
-- (nullable instancetype)initWithContentsOfURL:(NSURL *)url error:(NSError **)outError
+- (nullable instancetype)initWithContentsOfURL:(NSURL *)url error:(NSError * __autoreleasing *)outError
 {
     NSParameterAssert(url);
 
@@ -175,7 +176,7 @@
     // Convert the array to a HBPreset tree.
     if (presetsArray.count)
     {
-        self = [self initWithFolderName:@"Imported Presets" builtIn:NO];
+        self = [self initWithCategoryName:@"Imported Presets" builtIn:NO];
 
         if (self)
         {
@@ -185,6 +186,7 @@
                 [self.children addObject:preset];
             }
         }
+        [self resetBuiltInAndDefaultState];
         return self;
     }
     else if (outError)
@@ -197,9 +199,9 @@
 
 - (NSError *)invalidPresetErrorForUrl:(NSURL *)url
 {
-    NSString *description = [NSString stringWithFormat:NSLocalizedString(@"The preset \"%@\" could not be imported.", nil),
+    NSString *description = [NSString stringWithFormat:HBKitLocalizedString(@"The preset \"%@\" could not be imported.", @"Preset -> import error description"),
                              url.lastPathComponent];
-    NSString *reason = NSLocalizedString(@"The selected preset is invalid.", nil);
+    NSString *reason = HBKitLocalizedString(@"The selected preset is invalid.", @"Preset -> import error reason");
 
     return [NSError errorWithDomain:@"HBPresetDomain" code:1 userInfo:@{NSLocalizedDescriptionKey: description,
                                                                         NSLocalizedRecoverySuggestionErrorKey: reason}];
@@ -208,13 +210,13 @@
 
 - (NSError *)newerPresetErrorForUrl:(NSURL *)url
 {
-    NSString *description = [NSString stringWithFormat:NSLocalizedString(@"The preset \"%@\" could not be imported.", nil),
+    NSString *description = [NSString stringWithFormat:HBKitLocalizedString(@"The preset \"%@\" could not be imported.", @"Preset -> import error description"),
                              url.lastPathComponent];
-    NSString *reason = NSLocalizedString(@"The selected preset was created with a newer version of HandBrake.", nil);
+    NSString *reason = HBKitLocalizedString(@"The selected preset was created with a newer version of HandBrake.",  @"Preset -> import error reason");
 
     return [NSError errorWithDomain:@"HBPresetDomain" code:2 userInfo:@{NSLocalizedDescriptionKey: description,
                                                                         NSLocalizedRecoverySuggestionErrorKey: reason}];
-    
+
 }
 
 /**
@@ -245,7 +247,7 @@
     return output;
 }
 
-- (BOOL)writeToURL:(NSURL *)url atomically:(BOOL)atomically format:(HBPresetFormat)format removeRoot:(BOOL)removeRoot;
+- (BOOL)writeToURL:(NSURL *)url atomically:(BOOL)atomically removeRoot:(BOOL)removeRoot error:(NSError * __autoreleasing *)outError
 {
     BOOL success = NO;
     NSArray *presetList;
@@ -267,15 +269,10 @@
                             @"VersionMinor": @(minor),
                             @"VersionMicro": @(micro) };
 
-    if (format == HBPresetFormatPlist)
-    {
-        success = [dict writeToURL:url atomically:atomically];
-    }
-    else
-    {
-        NSData *jsonPreset = [NSJSONSerialization dataWithJSONObject:dict options:NSJSONWritingPrettyPrinted error:NULL];
-        success = [jsonPreset writeToURL:url atomically:atomically];
-    }
+
+    NSUInteger sortKeys = (1UL << 1); // NSJSONWritingSortedKeys in 10.13 sdk;
+    NSData *jsonPreset = [NSJSONSerialization dataWithJSONObject:dict options:NSJSONWritingPrettyPrinted | sortKeys error:NULL];
+    success = [jsonPreset writeToURL:url options:NSDataWritingAtomic error:outError];
 
     return success;
 }
@@ -295,6 +292,17 @@
         {
             self.content = [cleanedDict mutableCopy];
         }
+    }
+}
+
+- (void)resetBuiltInAndDefaultState
+{
+    _isBuiltIn = NO;
+    _isDefault = NO;
+
+    for (HBPreset *child in self.children)
+    {
+        [child resetBuiltInAndDefaultState];
     }
 }
 

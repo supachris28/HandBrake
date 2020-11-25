@@ -3,12 +3,14 @@
 //   This file is part of the HandBrake source code - It may be used under the terms of the GNU General Public License.
 // </copyright>
 // <summary>
-//   The User Setting Service Interace.
+//   The User Setting Service Interface.
 // </summary>
 // --------------------------------------------------------------------------------------------------------------------
 
 namespace HandBrakeWPF.Services.Interfaces
 {
+    using System;
+
     using SettingChangedEventArgs = HandBrakeWPF.EventArgs.SettingChangedEventArgs;
 
     /// <summary>
@@ -23,7 +25,7 @@ namespace HandBrakeWPF.Services.Interfaces
     public delegate void SettingEventHandler(object sender, SettingChangedEventArgs e);
 
     /// <summary>
-    /// The User Setting Service Interace.
+    /// The User Setting Service Interface.
     /// </summary>
     public interface IUserSettingService
     {
@@ -56,5 +58,10 @@ namespace HandBrakeWPF.Services.Interfaces
         /// The user setting
         /// </returns>
         T GetUserSetting<T>(string name);
+
+        /// <summary>
+        /// Reset all HandBrake settings to defaults.
+        /// </summary>
+        void ResetSettingsToDefaults();
     }
 }

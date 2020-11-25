@@ -1,14 +1,13 @@
 /* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
 /*
  * appcast.c
- * Copyright (C) John Stebbins 2008-2017 <stebbins@stebbins>
+ * Copyright (C) John Stebbins 2008-2020 <stebbins@stebbins>
  *
  * appcast.c is free software.
  *
  * You may redistribute it and/or modify it under the terms of the
- * GNU General Public License, as published by the Free Software
- * Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * GNU General Public License version 2, as published by the Free Software
+ * Foundation.
  *
  * appcast.c is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of

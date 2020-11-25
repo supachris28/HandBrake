@@ -5,56 +5,32 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import "HBVideoController.h"
-#import "HBAdvancedController.h"
+#import "HBPreferencesKeys.h"
 
 @import HandBrakeKit;
 
-#include "hb.h"
-
 static void *HBVideoControllerContext = &HBVideoControllerContext;
 
-@interface HBVideoController () {
-    // Framerate Radio Button Framerate Controls
-    IBOutlet NSButtonCell *fFramerateVfrPfrCell;
+@interface HBVideoController ()
 
-    // Video Encoder
-    IBOutlet NSSlider *fVidQualitySlider;
+@property (nonatomic, weak) IBOutlet NSButton *framerateVfrPfrButton;
+@property (nonatomic, weak) IBOutlet NSSlider *vidQualitySlider;
 
-    // Encoder options views
-    IBOutlet NSView *fPresetView;
-    IBOutlet NSView *fSimplePresetView;
+// Advanced encoder options
+@property (nonatomic, weak) IBOutlet NSView *encoderOptionsView;
+@property (nonatomic, weak) IBOutlet NSSlider *presetSlider;
+// Text Field to show the expanded opts from unparse()
+@property (nonatomic, weak) IBOutlet NSTextField *unparseTextField;
 
-    IBOutlet NSTextField *fEncoderOptionsLabel;
+// Simple encoder options
+@property (nonatomic, weak) IBOutlet NSView *encoderOptionsSimpleView;
 
-    // x264/x265 Presets Box
-    IBOutlet NSButton       *fX264UseAdvancedOptionsCheck;
-    IBOutlet NSBox          *fDividerLine;
-    IBOutlet NSBox          *fPresetsBox;
-    IBOutlet NSSlider       *fPresetsSlider;
-
-    // Text Field to show the expanded opts from unparse()
-    IBOutlet NSTextField *fDisplayX264PresetsUnparseTextField;
-}
-
-@property (nonatomic, strong, readwrite) HBAdvancedController *advancedController;
-
-@property (nonatomic, readwrite) BOOL presetViewEnabled;
-
-@property (nonatomic, readwrite) NSColor *labelColor;
+@property (nonatomic) BOOL presetViewEnabled;
+@property (nonatomic) NSColor *labelColor;
 
 @end
 
 @implementation HBVideoController
-
-- (instancetype)initWithAdvancedController:(HBAdvancedController *)advancedController
-{
-    self = [self init];
-    if (self)
-    {
-        _advancedController = advancedController;
-    }
-    return self;
-}
 
 - (instancetype)init
 {
@@ -63,15 +39,9 @@ static void *HBVideoControllerContext = &HBVideoControllerContext;
     {
         _labelColor = [NSColor disabledControlTextColor];
 
-        // Observe the advanced tab pref shown/hided state.
-        [[NSUserDefaultsController sharedUserDefaultsController] addObserver:self
-                                                                  forKeyPath:@"values.HBShowAdvancedTab"
-                                                                     options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionInitial
-                                                                     context:HBVideoControllerContext];
-
         // Observe the x264 slider granularity, to update the slider when the pref is changed.
         [[NSUserDefaultsController sharedUserDefaultsController] addObserver:self
-                                                                  forKeyPath:@"values.x264CqSliderFractional"
+                                                                  forKeyPath:@"values.HBx264CqSliderFractional"
                                                                      options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionInitial
                                                                      context:HBVideoControllerContext];
 
@@ -81,10 +51,15 @@ static void *HBVideoControllerContext = &HBVideoControllerContext;
         [self addObserver:self forKeyPath:@"video.quality" options:NSKeyValueObservingOptionInitial context:HBVideoControllerContext];
         [self addObserver:self forKeyPath:@"video.preset" options:NSKeyValueObservingOptionInitial context:HBVideoControllerContext];
         [self addObserver:self forKeyPath:@"video.unparseOptions" options:NSKeyValueObservingOptionInitial context:HBVideoControllerContext];
-        [self addObserver:self forKeyPath:@"video.advancedOptions" options:NSKeyValueObservingOptionInitial context:HBVideoControllerContext];
     }
 
     return self;
+}
+
+- (void)viewDidLoad
+{
+    self.encoderOptionsView.hidden = YES;
+    self.encoderOptionsSimpleView.hidden = YES;
 }
 
 - (void)setVideo:(HBVideo *)video
@@ -121,60 +96,33 @@ static void *HBVideoControllerContext = &HBVideoControllerContext;
             // fFramerateVfrPfrCell
             if (self.video.frameRate == 0) // We are Same as Source
             {
-                [fFramerateVfrPfrCell setTitle:NSLocalizedString(@"Variable Framerate", nil)];
+                [self.framerateVfrPfrButton setTitle:NSLocalizedString(@"Variable Framerate", @"Video -> Framerate")];
             }
             else
             {
-                [fFramerateVfrPfrCell setTitle:NSLocalizedString(@"Peak Framerate (VFR)", nil)];
+                [self.framerateVfrPfrButton setTitle:NSLocalizedString(@"Peak Framerate (VFR)", @"Video -> Framerate")];
             }
         }
         else if ([keyPath isEqualToString:@"video.quality"])
         {
-            if ([fVidQualitySlider respondsToSelector:@selector(setAccessibilityValueDescription:)])
-            {
-                fVidQualitySlider.accessibilityValueDescription = [NSString stringWithFormat:@"%@ %.2f", self.video.constantQualityLabel, self.video.quality];;
-            }
+            self.vidQualitySlider.accessibilityValueDescription = [NSString stringWithFormat:@"%@ %.2f", self.video.constantQualityLabel, self.video.quality];;
         }
         else if ([keyPath isEqualToString:@"video.preset"])
         {
-            if ([fPresetsSlider respondsToSelector:@selector(setAccessibilityValueDescription:)])
-            {
-                fPresetsSlider.accessibilityValueDescription = self.video.preset;
-            }
+            self.presetSlider.accessibilityValueDescription = self.video.preset;
         }
         else if ([keyPath isEqualToString:@"video.unparseOptions"])
         {
-            if (self.video.encoder & HB_VCODEC_X264_MASK)
+            if ([self.video isUnparsedSupported:self.video.encoder])
             {
-                fDisplayX264PresetsUnparseTextField.stringValue = [NSString stringWithFormat:@"x264 Unparse: %@", self.video.unparseOptions];
+                self.unparseTextField.stringValue = [NSString stringWithFormat:@"x264 Unparse: %@", self.video.unparseOptions];
             }
             else
             {
-                fDisplayX264PresetsUnparseTextField.stringValue = @"";
+                self.unparseTextField.stringValue = @"";
             }
         }
-        else if ([keyPath isEqualToString:@"video.advancedOptions"])
-        {
-            if (self.video.advancedOptions)
-            {
-                // Do not enable the advanced panel it isn't visible.
-                if ([[NSUserDefaults standardUserDefaults] boolForKey:@"HBShowAdvancedTab"])
-                {
-                    self.advancedController.videoSettings = self.video.advancedOptions ? self.video : nil;
-                }
-                else
-                {
-                    self.video.advancedOptions = NO;
-                }
-            }
-            // enable/disable, populate and update the various widgets
-            [self enableEncoderOptionsWidgets:(self.video != nil)];
-
-        } else if ([keyPath isEqualToString:@"values.HBShowAdvancedTab"])
-        {
-            [self toggleAdvancedOptionsCheckBoxForEncoder:self.video.encoder];
-        }
-        else if ([keyPath isEqualToString:@"values.x264CqSliderFractional"])
+        else if ([keyPath isEqualToString:@"values.HBx264CqSliderFractional"])
         {
             [self setupQualitySlider];
         }
@@ -193,27 +141,28 @@ static void *HBVideoControllerContext = &HBVideoControllerContext;
  */
 - (void)setupQualitySlider
 {
-    int direction;
-    float minValue, maxValue, granularity;
-    hb_video_quality_get_limits(self.video.encoder,
-                                &minValue, &maxValue, &granularity, &direction);
+    int direction = 1;
+    float minValue = 0, maxValue = 0, granularity = 0;
+    [self.video qualityLimitsForEncoder:self.video.encoder low:&minValue high:&maxValue granularity:&granularity direction:&direction];
+
     if (granularity < 1.0f)
     {
          // Encoders that allow fractional CQ values often have a low granularity
          // which makes the slider hard to use, so use a value from preferences.
-        granularity = [[NSUserDefaults standardUserDefaults]
-                       floatForKey:@"x264CqSliderFractional"];
+        granularity = 1.0f / [NSUserDefaults.standardUserDefaults
+                       integerForKey:HBCqSliderFractional];
     }
-    fVidQualitySlider.minValue = minValue;
-    fVidQualitySlider.maxValue = maxValue;
-    [fVidQualitySlider setNumberOfTickMarks:(int)((maxValue - minValue) *
-                                             (1.0f / granularity)) + 1];
+    self.vidQualitySlider.minValue = minValue;
+    self.vidQualitySlider.maxValue = maxValue;
+
+    NSInteger numberOfTickMarks = (NSInteger)((maxValue - minValue) * (1.0f / granularity)) + 1;
+    self.vidQualitySlider.numberOfTickMarks = numberOfTickMarks;
 
     // Replace the slider transformer with a new one,
     // configured with the new max/min/direction values.
-    [fVidQualitySlider unbind:@"value"];
+    [self.vidQualitySlider unbind:@"value"];
     HBQualityTransformer *transformer = [[HBQualityTransformer alloc] initWithReversedDirection:(direction != 0) min:minValue max:maxValue];
-    [fVidQualitySlider bind:@"value" toObject:self withKeyPath:@"self.video.quality" options:@{NSValueTransformerBindingOption: transformer}];
+    [self.vidQualitySlider bind:@"value" toObject:self withKeyPath:@"self.video.quality" options:@{NSValueTransformerBindingOption: transformer}];
 }
 
 #pragma mark - Video x264/x265 Presets
@@ -223,64 +172,22 @@ static void *HBVideoControllerContext = &HBVideoControllerContext;
  */
 - (void)switchPresetView
 {
-    self.advancedController.hidden = YES;
+    BOOL supportPresets = [self.video isPresetSystemSupported:self.video.encoder];
+    self.encoderOptionsView.hidden = !supportPresets;
+    self.encoderOptionsSimpleView.hidden = !([self.video isSimpleOptionsPanelSupported:self.video.encoder] && !supportPresets);
 
-    if (hb_video_encoder_get_presets(self.video.encoder) != NULL)
+    if ([self.video isPresetSystemSupported:self.video.encoder])
     {
-        [self toggleAdvancedOptionsCheckBoxForEncoder:self.video.encoder];
-
-        fPresetsBox.contentView = fPresetView;
         [self setupPresetsSlider];
-
-        if (self.video.encoder & HB_VCODEC_X264_MASK)
-        {
-            self.advancedController.hidden = NO;
-        }
-    }
-    else if (self.video.encoder & HB_VCODEC_FFMPEG_MASK)
-    {
-        fPresetsBox.contentView = fSimplePresetView;
-    }
-    else
-    {
-        fPresetsBox.contentView = nil;
     }
 }
 
 /**
- *  Enables/disables the advanced panel and the preset panel.
+ *  Enables/disables the preset panel.
  */
 - (void)enableEncoderOptionsWidgets:(BOOL)enable
 {
-    // check whether the x264 preset system and the advanced panel should be enabled
-    BOOL enable_x264_controls  = (enable && !self.video.advancedOptions);
-    BOOL enable_advanced_panel = (enable && self.video.advancedOptions);
-
-    // enable/disable the checkbox and advanced panel
-    self.presetViewEnabled = enable_x264_controls;
-    self.advancedController.enabled = enable_advanced_panel;
-}
-
-/**
- *  Shows/Hides the advanced options checkbox
- *
- *  @param encoder the current encoder
- */
-- (void)toggleAdvancedOptionsCheckBoxForEncoder:(int)encoder
-{
-    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"HBShowAdvancedTab"] && (encoder & HB_VCODEC_X264_MASK))
-    {
-        fX264UseAdvancedOptionsCheck.hidden = NO;
-        fDividerLine.hidden = YES;
-        fEncoderOptionsLabel.stringValue = NSLocalizedString(@"Encoder Options:", @"");
-    }
-    else
-    {
-        fX264UseAdvancedOptionsCheck.hidden =YES;
-        fDividerLine.hidden = NO;
-        fEncoderOptionsLabel.stringValue = NSLocalizedString(@"Encoder Options", @"");
-        self.video.advancedOptions = NO;
-    }
+    self.presetViewEnabled = enable;
 }
 
 /**
@@ -290,15 +197,14 @@ static void *HBVideoControllerContext = &HBVideoControllerContext;
 - (void)setupPresetsSlider
 {
     // setup the preset slider
-    [fPresetsSlider setMaxValue:self.video.presets.count - 1];
-    [fPresetsSlider setNumberOfTickMarks:self.video.presets.count];
+    self.presetSlider.maxValue = self.video.presets.count - 1;
+    self.presetSlider.numberOfTickMarks = self.video.presets.count;
 
     // Bind the slider value to a custom value transformer,
     // done here because it can't be done in IB.
-    [fPresetsSlider unbind:@"value"];
+    [self.presetSlider unbind:@"value"];
     HBPresetsTransformer *transformer = [[HBPresetsTransformer alloc] initWithEncoder:self.video.encoder];
-    [fPresetsSlider bind:@"value" toObject:self withKeyPath:@"self.video.preset" options:@{NSValueTransformerBindingOption: transformer}];
+    [self.presetSlider bind:@"value" toObject:self withKeyPath:@"self.video.preset" options:@{NSValueTransformerBindingOption: transformer}];
 }
-
 
 @end

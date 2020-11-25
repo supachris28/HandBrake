@@ -226,17 +226,28 @@
     self = [super init];
 
     decodeInteger(_trackSelectionBehavior);
-    decodeObject(_trackSelectionLanguages, NSMutableArray);
+    if (_trackSelectionBehavior < HBSubtitleTrackSelectionBehaviorNone || _trackSelectionBehavior > HBSubtitleTrackSelectionBehaviorAll)
+    {
+        goto fail;
+    }
+    decodeCollectionOfObjectsOrFail(_trackSelectionLanguages, NSMutableArray, NSString);
 
     decodeBool(_addForeignAudioSearch);
     decodeBool(_addForeignAudioSubtitle);
     decodeBool(_addCC);
 
     decodeInteger(_burnInBehavior);
+    if (_burnInBehavior < HBSubtitleTrackBurnInBehaviorNone || _burnInBehavior > HBSubtitleTrackBurnInBehaviorForeignAudioThenFirst)
+    {
+        goto fail;
+    }
     decodeBool(_burnInDVDSubtitles);
     decodeBool(_burnInBluraySubtitles);
 
     return self;
+
+fail:
+    return nil;
 }
 
 

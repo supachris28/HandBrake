@@ -1,5 +1,5 @@
 GCC.gcc = gcc
-GCC.gxx = $(dir $(GCC.gcc))$(subst clang,clang++,$(subst gcc,g++,$(notdir $(GCC.gcc))))
+GCC.gxx = $(dir $(GCC.gcc))$(subst cc,c++,$(subst clang,clang++,$(subst gcc,g++,$(notdir $(GCC.gcc)))))
 
 GCC.strip   = $$(if $$(filter none,$$(GCC.g)),1)
 GCC.dylib   = 1
@@ -8,7 +8,7 @@ GCC.c_std   = 1
 GCC.cxx_std = 0
 GCC.ML      = 1
 GCC.H       = 0
-GCC.W       = all
+GCC.W       = all $(GCC.W.extra)
 GCC.archs   =
 GCC.sysroot =
 GCC.minver  =
@@ -41,39 +41,40 @@ GCC.extra.cpp_o   = 1
 GCC.extra.dylib++ = 1
 GCC.extra.exe++   = 1
 
-GCC.args.pipe      = -pipe
-GCC.args.strip     = -Wl,-S
-GCC.args.dylib     = -dynamiclib
-GCC.args.ML        = -fmessage-length=0
-GCC.args.H         = -H
-GCC.args.W         = -W$(1)
-ifeq (darwin,$(BUILD.system))
-    GCC.args.archs = -arch $(1)
+GCC.args.pipe              = -pipe
+GCC.args.strip             = -Wl,-S
+GCC.args.dylib             = -dynamiclib
+GCC.args.ML                = -fmessage-length=0
+GCC.args.H                 = -H
+GCC.args.W                 = -W$(1)
+ifeq (darwin,$(HOST.system))
+    GCC.args.archs         = -arch $(1)
 endif
-GCC.args.sysroot   = --sysroot=$(1)
-GCC.args.minver    = -mmacosx-version-min=$(1)
-GCC.args.vis       = -fvisibility=hidden
-GCC.args.pic       = -fPIC
-GCC.args.c_std     = -std=gnu99
-GCC.args.cxx_std   = -std=c++98
-GCC.args.g.none    = -g0
-GCC.args.g.min     = -gdwarf-2 -g1
-GCC.args.g.std     = -gdwarf-2
-GCC.args.g.max     = -gdwarf-2 -g3
-GCC.args.O.none    = -O0
-GCC.args.O.size    = -Os
-GCC.args.O.speed   = -O3
-GCC.args.D         = -D$(1)
-GCC.args.I         = -I$(1)
-GCC.args.muldefs   = -Wl,--allow-multiple-definition
-GCC.args.start     = -Wl,--start-group
-GCC.args.F         = -F$(1)
-GCC.args.f         = -framework $(1)
-GCC.args.L         = -L$(1)
-GCC.args.l         = -l$(1)
-GCC.args.end       = -Wl,--end-group
+GCC.args.sysroot           = --sysroot=$(1)
+GCC.args.minver            = -mmacosx-version-min=$(1)
+GCC.args.vis               = -fvisibility=hidden
+GCC.args.pic               = -fPIC
+GCC.args.c_std             = -std=gnu99
+GCC.args.cxx_std           = -std=c++98
+GCC.args.g.none            = -g0
+GCC.args.g.min             = -gdwarf-2 -g1
+GCC.args.g.std             = -gdwarf-2
+GCC.args.g.max             = -gdwarf-2 -g3
+GCC.args.O.none            = -O0
+GCC.args.O.size            = -Os
+GCC.args.O.size-aggressive = -Oz
+GCC.args.O.speed           = -O3
+GCC.args.D                 = -D$(1)
+GCC.args.I                 = -I$(1)
+GCC.args.muldefs           = -Wl,--allow-multiple-definition
+GCC.args.start             = -Wl,--start-group
+GCC.args.F                 = -F$(1)
+GCC.args.f                 = -framework $(1)
+GCC.args.L                 = -L$(1)
+GCC.args.l                 = -l$(1)
+GCC.args.end               = -Wl,--end-group
 
-ifeq ($(BUILD.machine),$(filter $(BUILD.machine),i686 x86_64))
+ifeq ($(HOST.machine),$(filter $(HOST.machine),i686 x86_64))
     GCC.args.extra = $(CFLAGS) $(CPPFLAGS) -mfpmath=sse -msse2
 else
     GCC.args.extra = $(CFLAGS) $(CPPFLAGS)
@@ -86,12 +87,19 @@ GCC.args.extra.hpp_o   =
 GCC.args.extra.cpp_o   =
 GCC.args.extra.dylib++ = $(LDFLAGS)
 GCC.args.extra.exe++   = $(LDFLAGS)
+# If hardening is enabled -D_FORTIFY_SOURCE=2 adds compile-time protection and run-time
+# checking against static sized buffer overflow flaws. -fstack-protector-strong enables
+# stack canaries to detect stack buffer overflows (stack overwrites).
+ifeq (1,$(SECURITY.harden))
+    GCC.args.extra     += -fstack-protector-strong -D_FORTIFY_SOURCE=2
+    GCC.args.extra.exe += -fstack-protector-strong
+endif
 
 ###############################################################################
 
 define import.GCC
     $(1).GCC.gcc = $$(GCC.gcc)
-    $(1).GCC.gxx = $$(dir $$($(1).GCC.gcc))$$(subst clang,clang++,$$(subst gcc,g++,$$(notdir $$($(1).GCC.gcc))))
+    $(1).GCC.gxx = $$(dir $$($(1).GCC.gcc))$$(subst cc,c++,$$(subst clang,clang++,$$(subst gcc,g++,$$(notdir $$($(1).GCC.gcc)))))
 
     $(1).GCC.pipe    = $$(GCC.pipe)
     $(1).GCC.c_std   = $$(GCC.c_std)

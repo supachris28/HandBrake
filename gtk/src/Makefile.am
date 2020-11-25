@@ -1,36 +1,62 @@
 ## Process this file with automake to produce Makefile.in
 
 icons =	\
-	hb-icon.svg
+	hb-icon.svg fr.handbrake.ghb.svg
 
 icons_dep =	\
-	hb-icon.svg \
-	hb-start.svg \
-	hb-pause.svg \
-	hb-stop.svg \
-	hb-add-queue.svg \
-	hb-showqueue.svg \
-	hb-picture.svg \
-	hb-activity.svg \
-	hb-source.svg \
-	hb-remove.svg \
-	hb-edit.svg \
-	hb-complete.svg
+	icons/24x24/apps/hb-remove.png \
+	icons/32x32/apps/hb-source.png \
+	icons/32x32/apps/hb-picture.png \
+	icons/32x32/apps/hb-add-queue.png \
+	icons/32x32/apps/hb-showqueue.png \
+	icons/32x32/apps/hb-activity.png \
+	icons/32x32/apps/hb-start.png \
+	icons/32x32/apps/hb-stop.png \
+	icons/32x32/apps/hb-pause.png \
+	icons/48x48/apps/hb-remove.png \
+	icons/64x64/apps/hb-source.png \
+	icons/64x64/apps/hb-picture.png \
+	icons/64x64/apps/hb-add-queue.png \
+	icons/64x64/apps/hb-showqueue.png \
+	icons/64x64/apps/hb-activity.png \
+	icons/64x64/apps/hb-start.png \
+	icons/64x64/apps/hb-stop.png \
+	icons/64x64/apps/hb-pause.png \
+	icons/scalable/apps/hb-source.svg \
+	icons/scalable/apps/hb-picture.svg \
+	icons/scalable/apps/hb-add-queue.svg \
+	icons/scalable/apps/hb-showqueue.svg \
+	icons/scalable/apps/hb-activity.svg \
+	icons/scalable/apps/hb-start.svg \
+	icons/scalable/apps/hb-stop.svg \
+	icons/scalable/apps/hb-pause.svg \
+	icons/scalable/apps/hb-remove.svg \
+	icons/scalable/apps/hb-complete.svg \
+	icons/scalable/apps/hb-edit.svg \
+	icons/scalable/apps/hb-icon.svg \
+	icons/scalable/apps/hb-advanced.svg \
+	icons/scalable/apps/fr.handbrake.ghb.svg
 
-if GHB_FLATPAK
-icons += fr.handbrake.ghb.svg
 hb_menu = fr.handbrake.ghb.desktop
-flatpak_appdata = fr.handbrake.ghb.appdata.xml
-else
-hb_menu = ghb.desktop
+
+metainfodir = $(datarootdir)/metainfo
+metainfo_in_files = fr.handbrake.ghb.metainfo.xml.in
+if ! MINGW
+metainfo_DATA = $(metainfo_in_files:.xml.in=.xml)
+dist_metainfo_DATA = $(metainfo_files)
 endif
 
+EXTRA_DIST = \
+	$(metainfo_in_files)
+
+DISTCLEANFILES = \
+	$(metainfo_files)
 
 AM_CPPFLAGS = \
-	-DPACKAGE_LOCALE_DIR=\""$(prefix)/$(DATADIRNAME)/locale"\" \
+	-DPACKAGE_LOCALE_DIR=\""$(datadir)/locale"\" \
 	-DPACKAGE_SRC_DIR=\""$(srcdir)"\" \
 	-DPACKAGE_DATA_DIR=\""$(datadir)"\" \
-	$(GHB_CFLAGS)
+	$(HB_CPPFLAGS)
 
 AM_CFLAGS = -Wall -g
 
@@ -40,8 +66,12 @@ bin_PROGRAMS = ghb
 nodist_EXTRA_ghb_SOURCES = dummy.cpp
 
 ghb_SOURCES = \
+	ghbcompat.c \
+	ghbcompat.h \
 	callbacks.c \
 	callbacks.h \
+	chapters.c \
+	chapters.h \
 	queuehandler.c \
 	queuehandler.h \
 	videohandler.c \
@@ -50,9 +80,11 @@ ghb_SOURCES = \
 	audiohandler.h \
 	subtitlehandler.c \
 	subtitlehandler.h \
-	x264handler.c \
-	x264handler.h \
 	main.c \
+	jobdict.c \
+	jobdict.h \
+	titledict.c \
+	titledict.h \
 	settings.c \
 	settings.h \
 	resources.c \
@@ -78,8 +110,6 @@ ghb_SOURCES = \
 	hb-backend.h \
 	renderer_button.h \
 	renderer_button.c \
-	ghbcellrenderertext.c \
-	ghbcellrenderertext.h \
 	ghb-dvd.c \
 	ghb-dvd.h \
 	marshalers.c \
@@ -87,13 +117,13 @@ ghb_SOURCES = \
 
 if MINGW
 ghb_LDFLAGS = \
-	-mwindows -Wl,--export-dynamic -Wl,--exclude-libs,ALL
+	-mwindows
 else
 ghb_LDFLAGS = \
 	-Wl,--export-dynamic -Wl,--exclude-libs,ALL
 endif
 
-ghb_LDADD = $(HB_LIBS) $(GHB_LIBS)
+ghb_LDADD = $(HB_LIBS)
 
 ghb_DEPENDENCIES = $(HB_DIR)/libhb/libhandbrake.a
 
@@ -114,21 +144,24 @@ data_res.h : data_res.gresource.xml $(srcdir)/internal_defaults.json widget.deps
 	cp $(srcdir)/internal_defaults.json .
 	glib-compile-resources --generate --target=$@ --c-name ghb_data --manual-register $<
 
-if GHB_GTK_3_14
-UI=314
+if GHB_GTK_4_00
+UI=400
+UI_FILE=ghb4.ui
 else
-if GHB_GTK_3_12
-UI=312
+if GHB_GTK_3_16
+UI=316
+UI_FILE=ghb3.ui
 else
 UI=300
+UI_FILE=ghb3.ui
 endif
 endif
 
-ui_res.c : ui_res.gresource.xml ui_res.h $(srcdir)/ghb.m4
+ui_res.c : ui_res.gresource.xml ui_res.h $(srcdir)/$(UI_FILE)
 	glib-compile-resources --generate --target=$@ --c-name ghb_ui --manual-register $<
 
-ui_res.h : ui_res.gresource.xml $(srcdir)/ghb.m4
-	m4 -Dgtk_version=$(UI) $(srcdir)/ghb.m4 > ghb.ui
+ui_res.h : ui_res.gresource.xml $(srcdir)/$(UI_FILE)
+	cp $(srcdir)/$(UI_FILE) ghb.ui
 	glib-compile-resources --generate --target=$@ --c-name ghb_ui --manual-register $<
 
 ui_res.o: ui_res.h ui_res.c
@@ -139,9 +172,13 @@ resources.o: data_res.h
 
 widget_reverse.deps: makedeps.py
 widget.deps: makedeps.py
-	python2 $(srcdir)/makedeps.py
+	$(HB_PYTHON) $(srcdir)/makedeps.py
 
-ghbcellrenderertext.$(OBJEXT): marshalers.h
+fr.handbrake.ghb.metainfo.xml: fr.handbrake.ghb.metainfo.xml.in
+	$(AM_V_GEN) $(MSGFMT) --xml --template $< -d $(top_srcdir)/po -o $@
+
+fr.handbrake.ghb.metainfo.xml.in: fr.handbrake.ghb.metainfo.template.xml
+	sed -e 's^RELEASE_TAG^<release version="$(HB.version)" date="$(word 1,$(HB.repo.date))" />^' $< > $@
 
 $(srcdir)/marshalers.h: marshalers.list
 	glib-genmarshal --prefix=ghb_marshal $(srcdir)/marshalers.list --header > $(srcdir)/marshalers.h
@@ -163,9 +200,6 @@ uninstall-local:
 		echo "***   $(gtk_update_icon_cache)"; \
 	fi
 	rm -f $(DESTDIR)/$(datadir)/applications/$(hb_menu)
-	@-if test -n "$(flatpak_appdata)"; then \
-		rm -f $(DESTDIR)/$(datadir)/appdata/$(flatpak_appdata); \
-	fi
 
 install-data-local:
 	for icon in $(icons); do \
@@ -181,7 +215,3 @@ install-data-local:
 	fi
 	mkdir -p $(DESTDIR)/$(datadir)/applications/; \
 	$(INSTALL_DATA) $(srcdir)/$(hb_menu) $(DESTDIR)/$(datadir)/applications/$(hb_menu)
-	@-if test -n "$(flatpak_appdata)"; then \
-		mkdir -p $(DESTDIR)/$(datadir)/appdata/; \
-		$(INSTALL_DATA) $(srcdir)/$(flatpak_appdata) $(DESTDIR)/$(datadir)/appdata/$(flatpak_appdata); \
-	fi

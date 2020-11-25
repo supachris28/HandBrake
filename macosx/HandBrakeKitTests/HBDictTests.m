@@ -1,14 +1,12 @@
-//
-//  HBDictTests.m
-//  HandBrake
-//
-//  Created by Damiano Galassi on 01/03/16.
-//
-//
+/*  HBDictTests.m
+
+This file is part of the HandBrake source code.
+Homepage: <http://handbrake.fr/>.
+It may be used under the terms of the GNU General Public License. */
 
 #import <XCTest/XCTest.h>
 #import "NSDictionary+HBAdditions.h"
-#include "hb.h"
+#include "handbrake.h"
 
 @interface HBDictTests : XCTestCase
 

@@ -25,7 +25,7 @@ namespace HandBrakeWPF.Utilities
         private static Action<Action> executor = action => action();
 
         /// <summary>
-        /// Set the Forground Window
+        /// Set the Foreground Window
         /// </summary>
         /// <param name="hWnd">
         /// The h wnd.
@@ -103,7 +103,7 @@ namespace HandBrakeWPF.Utilities
         /// The dw process group id.
         /// </param>
         /// <returns>
-        /// Bool true is sucess
+        /// Bool true is success
         /// </returns>
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool GenerateConsoleCtrlEvent(ConsoleCtrlEvent sigevent, int dwProcessGroupId);
@@ -195,5 +195,48 @@ namespace HandBrakeWPF.Utilities
         {
             executor = marshaller;
         }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public class PowerState
+        {
+            public ACLineStatus ACLineStatus;
+            public BatteryFlag BatteryFlag;
+            public Byte BatteryLifePercent;
+            public Byte SystemStatusFlag;
+            public Int32 BatteryLifeTime;
+            public Int32 BatteryFullLifeTime;
+
+            public static PowerState GetPowerState()
+            {
+                PowerState state = new PowerState();
+                if (GetSystemPowerStatusRef(state))
+                {
+                    return state;
+                }
+
+                return null;
+            }
+
+            [DllImport("Kernel32", EntryPoint = "GetSystemPowerStatus")]
+            private static extern bool GetSystemPowerStatusRef(PowerState sps);
+        }
+
+        public enum ACLineStatus : byte
+        {
+            Offline = 0,
+            Online = 1,
+            Unknown = 255
+        }
+
+        public enum BatteryFlag : byte
+        {
+            High = 1,
+            Low = 2,
+            Critical = 4,
+            Charging = 8,
+            NoSystemBattery = 128,
+            Unknown = 255
+        }
     }
 }
+

@@ -13,10 +13,11 @@
 #import "HBMutablePreset.h"
 
 #import "HBCodingUtilities.h"
+#import "HBLocalizationUtilities.h"
 #import "HBUtilities.h"
 #import "HBSecurityAccessToken.h"
 
-#include "hb.h"
+#include "handbrake/handbrake.h"
 
 NSString *HBContainerChangedNotification = @"HBContainerChangedNotification";
 NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
@@ -38,13 +39,11 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
 @property (nonatomic, readwrite) HBSecurityAccessToken *fileURLToken;
 @property (nonatomic, readwrite) HBSecurityAccessToken *outputURLToken;
 @property (nonatomic, readwrite) HBSecurityAccessToken *subtitlesToken;
-@property (nonatomic, readwrite) NSInteger *accessCount;
+@property (nonatomic, readwrite) NSInteger accessCount;
 
 @end
 
 @implementation HBJob
-
-@synthesize uuid = _uuid;
 
 - (instancetype)initWithTitle:(HBTitle *)title andPreset:(HBPreset *)preset
 {
@@ -72,7 +71,7 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
 
         _chapterTitles = [title.chapters copy];
 
-        _uuid = [[NSUUID UUID] UUIDString];
+        _presetName = @"";
 
         [self applyPreset:preset];
     }
@@ -95,14 +94,16 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
     self.mp4HttpOptimize = [preset[@"Mp4HttpOptimize"] boolValue];
     self.mp4iPodCompatible = [preset[@"Mp4iPodCompatible"] boolValue];
 
+    self.alignAVStart = [preset[@"AlignAVStart"] boolValue];
+
     // Chapter Markers
     self.chaptersEnabled = [preset[@"ChapterMarkers"] boolValue];
 
-    [self.picture applyPreset:preset jobSettings:jobSettings];
-    [self.filters applyPreset:preset jobSettings:jobSettings];
     [self.audio applyPreset:preset jobSettings:jobSettings];
     [self.subtitles applyPreset:preset jobSettings:jobSettings];
     [self.video applyPreset:preset jobSettings:jobSettings];
+    [self.picture applyPreset:preset jobSettings:jobSettings];
+    [self.filters applyPreset:preset jobSettings:jobSettings];
 }
 
 - (void)writeToPreset:(HBMutablePreset *)preset
@@ -114,6 +115,8 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
     // MP4 specifics options.
     preset[@"Mp4HttpOptimize"] = @(self.mp4HttpOptimize);
     preset[@"Mp4iPodCompatible"] = @(self.mp4iPodCompatible);
+
+    preset[@"AlignAVStart"] = @(self.alignAVStart);
 
     [@[self.video, self.filters, self.picture, self.audio, self.subtitles] makeObjectsPerformSelector:@selector(writeToPreset:)
                                                                                                            withObject:preset];
@@ -145,7 +148,7 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
     _outputURL = [outputURL copy];
 
 #ifdef __SANDBOX_ENABLED__
-    // Clear we bookmark to regenerate it
+    // Clear the bookmark to regenerate it later
     self.outputURLFolderBookmark = nil;
 #endif
 }
@@ -157,6 +160,47 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
         [[self.undo prepareWithInvocationTarget:self] setOutputFileName:_outputFileName];
     }
     _outputFileName = [outputFileName copy];
+}
+
+- (BOOL)validateOutputFileName:(id *)ioValue error:(NSError * __autoreleasing *)outError
+{
+    BOOL retval = YES;
+
+    if (nil != *ioValue)
+    {
+        NSString *value = *ioValue;
+
+        if ([value rangeOfString:@"/"].location != NSNotFound)
+        {
+            if (outError)
+            {
+                *outError = [NSError errorWithDomain:@"HBError" code:0 userInfo:@{NSLocalizedDescriptionKey: HBKitLocalizedString(@"Invalid name", @"HBJob -> invalid name error description"),
+                                                                                  NSLocalizedRecoverySuggestionErrorKey: HBKitLocalizedString(@"The file name can't contain the / character.", @"HBJob -> invalid name error recovery suggestion")}];
+            }
+            return NO;
+        }
+        if (value.length == 0)
+        {
+            if (outError)
+            {
+                *outError = [NSError errorWithDomain:@"HBError" code:0 userInfo:@{NSLocalizedDescriptionKey: HBKitLocalizedString(@"Invalid name", @"HBJob -> invalid name error description"),
+                                                                                  NSLocalizedRecoverySuggestionErrorKey: HBKitLocalizedString(@"The file name can't be empty.", @"HBJob -> invalid name error recovery suggestion")}];
+            }
+            return NO;
+        }
+    }
+
+    if (*ioValue == nil)
+    {
+        if (outError)
+        {
+            *outError = [NSError errorWithDomain:@"HBError" code:0 userInfo:@{NSLocalizedDescriptionKey: HBKitLocalizedString(@"Invalid name", @"HBJob -> invalid name error description"),
+                                                                              NSLocalizedRecoverySuggestionErrorKey: HBKitLocalizedString(@"The file name can't be empty.", @"HBJob -> invalid name error recovery suggestion")}];
+        }
+        return NO;
+    }
+
+    return retval;
 }
 
 - (NSURL *)completeOutputURL
@@ -203,6 +247,19 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
         [[self.undo prepareWithInvocationTarget:self] setMp4HttpOptimize:_mp4HttpOptimize];
     }
     _mp4HttpOptimize = mp4HttpOptimize;
+
+    [[NSNotificationCenter defaultCenter] postNotificationName:HBContainerChangedNotification object:self];
+}
+
+- (void)setAlignAVStart:(BOOL)alignAVStart
+{
+    if (alignAVStart != _alignAVStart)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setAlignAVStart:_alignAVStart];
+    }
+    _alignAVStart = alignAVStart;
+
+    [[NSNotificationCenter defaultCenter] postNotificationName:HBContainerChangedNotification object:self];
 }
 
 - (void)setMp4iPodCompatible:(BOOL)mp4iPodCompatible
@@ -212,6 +269,8 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
         [[self.undo prepareWithInvocationTarget:self] setMp4iPodCompatible:_mp4iPodCompatible];
     }
     _mp4iPodCompatible = mp4iPodCompatible;
+
+    [[NSNotificationCenter defaultCenter] postNotificationName:HBContainerChangedNotification object:self];
 }
 
 - (void)setChaptersEnabled:(BOOL)chaptersEnabled
@@ -227,6 +286,27 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
 - (NSString *)description
 {
     return self.name;
+}
+
+- (void)refreshSecurityScopedResources
+{
+    if (_fileURLBookmark)
+    {
+        NSURL *resolvedURL = [HBUtilities URLFromBookmark:_fileURLBookmark];
+        if (resolvedURL)
+        {
+            _fileURL = resolvedURL;
+        }
+    }
+    if (_outputURLFolderBookmark)
+    {
+        NSURL *resolvedURL = [HBUtilities URLFromBookmark:_outputURLFolderBookmark];
+        if (resolvedURL)
+        {
+            _outputURL = resolvedURL;
+        }
+    }
+    [self.subtitles refreshSecurityScopedResources];
 }
 
 - (BOOL)startAccessingSecurityScopedResource
@@ -267,11 +347,9 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
 
     if (copy)
     {
-        copy->_state = HBJobStateReady;
         copy->_name = [_name copy];
         copy->_presetName = [_presetName copy];
         copy->_titleIdx = _titleIdx;
-        copy->_uuid = [[NSUUID UUID] UUIDString];
 
         copy->_fileURLBookmark = [_fileURLBookmark copy];
         copy->_outputURLFolderBookmark = [_outputURLFolderBookmark copy];
@@ -284,6 +362,7 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
         copy->_angle = _angle;
         copy->_mp4HttpOptimize = _mp4HttpOptimize;
         copy->_mp4iPodCompatible = _mp4iPodCompatible;
+        copy->_alignAVStart = _alignAVStart;
 
         copy->_range = [_range copy];
         copy->_video = [_video copy];
@@ -313,13 +392,11 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
 
 - (void)encodeWithCoder:(NSCoder *)coder
 {
-    [coder encodeInt:3 forKey:@"HBJobVersion"];
+    [coder encodeInt:5 forKey:@"HBJobVersion"];
 
-    encodeInt(_state);
     encodeObject(_name);
     encodeObject(_presetName);
     encodeInt(_titleIdx);
-    encodeObject(_uuid);
 
 #ifdef __SANDBOX_ENABLED__
     if (!_fileURLBookmark)
@@ -350,6 +427,7 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
     encodeInt(_angle);
     encodeBool(_mp4HttpOptimize);
     encodeBool(_mp4iPodCompatible);
+    encodeBool(_alignAVStart);
 
     encodeObject(_range);
     encodeObject(_video);
@@ -367,67 +445,46 @@ NSString *HBChaptersChangedNotification  = @"HBChaptersChangedNotification";
 {
     int version = [decoder decodeIntForKey:@"HBJobVersion"];
 
-    if (version == 3 && (self = [super init]))
+    if (version == 5 && (self = [super init]))
     {
-        decodeInt(_state);
-        decodeObject(_name, NSString);
-        decodeObject(_presetName, NSString);
-        decodeInt(_titleIdx);
-        decodeObject(_uuid, NSString);
+        decodeObjectOrFail(_name, NSString);
+        decodeObjectOrFail(_presetName, NSString);
+        decodeInt(_titleIdx); if (_titleIdx < 0) { goto fail; }
 
 #ifdef __SANDBOX_ENABLED__
-        _fileURLBookmark = [HBCodingUtilities decodeObjectOfClass:[NSData class] forKey:@"_fileURLBookmark" decoder:decoder];
-
-        if (_fileURLBookmark)
-        {
-            _fileURL = [HBUtilities URLFromBookmark:_fileURLBookmark];
-        }
-        else
-        {
-            decodeObject(_fileURL, NSURL);
-        }
-
-        _outputURLFolderBookmark = [HBCodingUtilities decodeObjectOfClass:[NSData class] forKey:@"_outputURLFolderBookmark" decoder:decoder];
-
-        if (_outputURLFolderBookmark)
-        {
-            _outputURL = [HBUtilities URLFromBookmark:_outputURLFolderBookmark];
-        }
-        else
-        {
-            decodeObject(_outputURL, NSURL);
-        }
-#else
-        decodeObject(_fileURL, NSURL);
-        decodeObject(_outputURL, NSURL);
+        decodeObject(_fileURLBookmark, NSData)
+        decodeObject(_outputURLFolderBookmark, NSData)
 #endif
-
+        decodeObjectOrFail(_fileURL, NSURL);
+        decodeObject(_outputURL, NSURL);
         decodeObject(_outputFileName, NSString);
 
-        decodeInt(_container);
-        decodeInt(_angle);
+        decodeInt(_container); if (_container != HB_MUX_MP4 && _container != HB_MUX_MKV && _container != HB_MUX_WEBM) { goto fail; }
+        decodeInt(_angle); if (_angle < 0) { goto fail; }
         decodeBool(_mp4HttpOptimize);
         decodeBool(_mp4iPodCompatible);
+        decodeBool(_alignAVStart);
 
-        decodeObject(_range, HBRange);
-        decodeObject(_video, HBVideo);
-        decodeObject(_picture, HBPicture);
-        decodeObject(_filters, HBFilters);
+        decodeObjectOrFail(_range, HBRange);
+        decodeObjectOrFail(_video, HBVideo);
+        decodeObjectOrFail(_picture, HBPicture);
+        decodeObjectOrFail(_filters, HBFilters);
 
         _video.job = self;
 
-        decodeObject(_audio, HBAudio);
-        decodeObject(_subtitles, HBSubtitles);
+        decodeObjectOrFail(_audio, HBAudio);
+        decodeObjectOrFail(_subtitles, HBSubtitles);
 
         _audio.job = self;
         _video.job = self;
 
         decodeBool(_chaptersEnabled);
-        decodeCollectionOfObjects(_chapterTitles, NSArray, HBChapter);
+        decodeCollectionOfObjectsOrFail(_chapterTitles, NSArray, HBChapter);
 
         return self;
     }
 
+fail:
     return nil;
 }
 

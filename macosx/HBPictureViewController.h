@@ -7,11 +7,14 @@
 #import <Cocoa/Cocoa.h>
 
 @class HBPicture;
-@class HBFilters;
+
+NS_ASSUME_NONNULL_BEGIN
 
 @interface HBPictureViewController : NSViewController
 
 @property (nonatomic, readwrite, weak) HBPicture *picture;
-@property (nonatomic, readwrite, weak) HBFilters *filters;
 
 @end
+
+NS_ASSUME_NONNULL_END
+

@@ -1,6 +1,6 @@
 /* plist.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
@@ -14,9 +14,9 @@
 #include <inttypes.h>
 #include "libxml/parser.h"
 
-#include "common.h"
-#include "hb_dict.h"
-#include "plist.h"
+#include "handbrake/common.h"
+#include "handbrake/hb_dict.h"
+#include "handbrake/plist.h"
 
 #define BUF_SZ  (128*1024)
 
@@ -383,7 +383,7 @@ end_element(
             if (pd->key) free(pd->key);
             pd->key = strdup(value);
             return;
-        } break;
+        }
         case P_DICT:
         {
             queue_pop_head(pd->stack);
@@ -650,7 +650,7 @@ gval_write(FILE *file, hb_value_t *gval)
     }
     else
     {
-        // Try to make anything thats unrecognized into a string
+        // Try to make anything that's unrecognized into a string
         hb_error("Unhandled data type %d", gtype);
     }
 }

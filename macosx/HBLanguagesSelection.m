@@ -5,7 +5,8 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import "HBLanguagesSelection.h"
-#include "lang.h"
+#import "HBPasteboardItem.h"
+#include "handbrake/lang.h"
 
 @implementation HBLang
 
@@ -68,10 +69,23 @@
         NSMutableArray<HBLang *> *internal = [[NSMutableArray alloc] init];
         NSMutableArray<HBLang *> *selected = [[NSMutableArray alloc] init];
 
-        const iso639_lang_t *lang = lang_get_next(NULL);
-        for (lang = lang_get_next(lang); lang != NULL; lang = lang_get_next(lang))
+        const iso639_lang_t *lang;
+        for (lang = lang_get_any(); lang != NULL; lang = lang_get_next(lang))
         {
-            NSString *nativeLanguage = strlen(lang->native_name) ? @(lang->native_name) : @(lang->eng_name);
+            NSString *nativeLanguage;
+
+            if (!strncmp(lang->iso639_2, "any", 3))
+            {
+                nativeLanguage = NSLocalizedString(@"Any", @"HBLanguage -> Any language");
+            }
+            else if (!strncmp(lang->iso639_2, "und", 3))
+            {
+                nativeLanguage = NSLocalizedString(@"Unknown", @"HBLanguage -> Unknown language");
+            }
+            else
+            {
+                nativeLanguage = strlen(lang->native_name) ? @(lang->native_name) : @(lang->eng_name);
+            }
 
             HBLang *item = [[HBLang alloc] initWithLanguage:nativeLanguage
                                                 iso639_2code:@(lang->iso639_2)];
@@ -84,17 +98,7 @@
             {
                 [internal addObject:item];
             }
-            
         }
-
-        // Add the (Any) item.
-        HBLang *item = [[HBLang alloc] initWithLanguage:@"(Any)"
-                                            iso639_2code:@"und"];
-        if ([languages containsObject:item.iso639_2])
-        {
-            item.isSelected = YES;
-        }
-        [internal insertObject:item atIndex:0];
 
         // Insert the selected items
         // in the original order.
@@ -137,8 +141,6 @@
 
 @end
 
-NSString *kHBLanguagesDragRowsType = @"kHBLanguagesDragRowsType";
-
 @implementation HBLanguageArrayController
 
 - (void)setShowSelectedOnly:(BOOL)showSelectedOnly
@@ -168,17 +170,16 @@ NSString *kHBLanguagesDragRowsType = @"kHBLanguagesDragRowsType";
 
 - (void)awakeFromNib
 {
-	[self.tableView registerForDraggedTypes:@[kHBLanguagesDragRowsType]];
+	[self.tableView registerForDraggedTypes:@[tableViewIndex]];
 	self.isDragginEnabled = YES;
 }
 
 #pragma mark - NSTableView Delegate
 
-- (BOOL)tableView:(NSTableView *)tableView writeRowsWithIndexes:(NSIndexSet *)rowIndexes toPasteboard:(NSPasteboard *)pboard
+- (nullable id <NSPasteboardWriting>)tableView:(NSTableView *)tableView pasteboardWriterForRow:(NSInteger)row
 {
     if (self.isDragginEnabled)
-	{
-        NSData *data = nil;
+    {
         if (self.showSelectedOnly)
         {
             // If the show selected only filter
@@ -188,27 +189,14 @@ NSString *kHBLanguagesDragRowsType = @"kHBLanguagesDragRowsType";
             self.showSelectedOnly = NO;
             NSArray *unfilteredArray = [self arrangedObjects];
 
-            NSMutableIndexSet *unfilteredIndexes = [NSMutableIndexSet indexSet];
-            NSUInteger currentIndex = [rowIndexes firstIndex];
-            while (currentIndex != NSNotFound)
-            {
-                NSUInteger newIndex = [unfilteredArray indexOfObject:filteredArray[currentIndex]];
-                [unfilteredIndexes addIndex:newIndex];
-                currentIndex = [rowIndexes indexGreaterThanIndex:currentIndex];
-            }
-
-            data = [NSKeyedArchiver archivedDataWithRootObject:unfilteredIndexes];
+            row = [unfilteredArray indexOfObject:filteredArray[row]];
         }
-        else
-        {
-            data = [NSKeyedArchiver archivedDataWithRootObject:rowIndexes];
-        }
-
-        [pboard declareTypes:@[kHBLanguagesDragRowsType] owner:self];
-        [pboard setData:data forType:kHBLanguagesDragRowsType];
+        return [[HBPasteboardItem alloc] initWithIndex:row];
     }
-    
-    return self.isDragginEnabled;
+    else
+    {
+        return nil;
+    }
 }
 
 - (NSDragOperation)tableView:(NSTableView *)view
@@ -219,10 +207,10 @@ NSString *kHBLanguagesDragRowsType = @"kHBLanguagesDragRowsType";
     NSDragOperation dragOp = NSDragOperationNone;
 
     // if drag source is our own table view, it's a move or a copy
-    if ([info draggingSource] == view)
+    if (info.draggingSource == view)
 	{
 		// At a minimum, allow move
-		dragOp =  NSDragOperationMove;
+		dragOp = NSDragOperationMove;
     }
 
     [view setDropRow:row dropOperation:NSTableViewDropAbove];
@@ -232,25 +220,28 @@ NSString *kHBLanguagesDragRowsType = @"kHBLanguagesDragRowsType";
 
 - (BOOL)tableView:(NSTableView *)view acceptDrop:(id <NSDraggingInfo>)info row:(NSInteger)row dropOperation:(NSTableViewDropOperation)operation
 {
-    if (([info draggingSourceOperationMask] == NSDragOperationCopy))
+    if (info.draggingSourceOperationMask == NSDragOperationCopy)
     {
         return NO;
     }
 
-    if ([info draggingSource] == view)
+    if (info.draggingSource == view)
     {
-        // Get the index set from the pasteBoard.
-        NSData *rowData = [[info draggingPasteboard] dataForType:kHBLanguagesDragRowsType];
-        NSIndexSet *indexSet = [NSKeyedUnarchiver unarchiveObjectWithData:rowData];
+        NSMutableIndexSet *indexes = [[NSMutableIndexSet alloc] init];
+        for (NSPasteboardItem *item in info.draggingPasteboard.pasteboardItems)
+        {
+            NSNumber *index = [item propertyListForType:tableViewIndex];
+            [indexes addIndex:index.integerValue];
+        }
 
-        NSUInteger i = [indexSet countOfIndexesInRange:NSMakeRange(0, row)];
+        NSUInteger i = [indexes countOfIndexesInRange:NSMakeRange(0, row)];
 
-        // Rearrage the objects.
-        [self moveObjectsInArrangedObjectsFromIndexes:indexSet toIndex:row];
+        // Rearrange the objects.
+        [self moveObjectsInArrangedObjectsFromIndexes:indexes toIndex:row];
 
         // Update the selection.
         row -= i;
-        NSIndexSet *selectionSet = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(row, [indexSet count])];
+        NSIndexSet *selectionSet = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(row, indexes.count)];
         [view selectRowIndexes:selectionSet byExtendingSelection:NO];
 
 		return YES;

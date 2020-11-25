@@ -16,6 +16,15 @@
 #import "HBTitle+Private.h"
 #import "HBMutablePreset.h"
 
+#import "HBRange.h"
+#import "HBVideo.h"
+#import "HBPicture.h"
+#import "HBFilters.h"
+#import "HBAudio.h"
+#import "HBSubtitles.h"
+
+#import "NSDictionary+HBAdditions.h"
+
 @implementation HBJob (HBJobConversion)
 
 - (NSDictionary *)jobDict
@@ -39,7 +48,7 @@
     hb_title_t *title = self.title.hb_title;
     hb_job_t *job = hb_job_init(title);
 
-    hb_job_set_file(job, self.completeOutputURL.path.fileSystemRepresentation);
+    hb_job_set_file(job, self.completeOutputURL.fileSystemRepresentation);
 
     // Title Angle for dvdnav
     job->angle = self.angle;
@@ -83,8 +92,12 @@
     job->mux = self.container;
     job->vcodec = self.video.encoder;
 
-    // We set http optimized mp4 here
     job->mp4_optimize = self.mp4HttpOptimize;
+
+    if (self.container & HB_MUX_MASK_MP4)
+    {
+        job->align_av_start = self.alignAVStart;
+    }
 
     // We set the chapter marker extraction here based on the format being
     // mpeg4 or mkv and the checkbox being checked.
@@ -137,35 +150,26 @@
         const char *encoder_options = NULL;
         const char *encoder_profile = NULL;
         const char *encoder_level   = NULL;
-        if (self.video.advancedOptions)
+
+        // we are using the x264/x265 preset system
+        if ([(tmpString = self.video.completeTune) length])
         {
-            // we are using the advanced panel
-            if ([(tmpString = self.video.videoOptionExtra) length])
-            {
-                encoder_options = tmpString.UTF8String;
-            }
+            encoder_tune = [tmpString UTF8String];
         }
-        else
+        if ([(tmpString = self.video.videoOptionExtra) length])
         {
-            // we are using the x264/x265 preset system
-            if ([(tmpString = self.video.completeTune) length])
-            {
-                encoder_tune = [tmpString UTF8String];
-            }
-            if ([(tmpString = self.video.videoOptionExtra) length])
-            {
-                encoder_options = [tmpString UTF8String];
-            }
-            if ([(tmpString = self.video.profile) length])
-            {
-                encoder_profile = [tmpString UTF8String];
-            }
-            if ([(tmpString = self.video.level) length])
-            {
-                encoder_level = [tmpString UTF8String];
-            }
-            encoder_preset = self.video.preset.UTF8String;
+            encoder_options = [tmpString UTF8String];
         }
+        if ([(tmpString = self.video.profile) length])
+        {
+            encoder_profile = [tmpString UTF8String];
+        }
+        if ([(tmpString = self.video.level) length])
+        {
+            encoder_level = [tmpString UTF8String];
+        }
+        encoder_preset = self.video.preset.UTF8String;
+
         hb_job_set_encoder_preset (job, encoder_preset);
         hb_job_set_encoder_tune   (job, encoder_tune);
         hb_job_set_encoder_options(job, encoder_options);
@@ -259,31 +263,32 @@
             }
             else
             {
-                // if we are getting the subtitles from an external srt file
-                if (subTrack.type == SRTSUB)
+                // if we are getting the subtitles from an external file
+                if (subTrack.type == IMPORTSRT || subTrack.type == IMPORTSSA)
                 {
                     hb_subtitle_config_t sub_config;
+                    int type = subTrack.type;
 
+                    sub_config.name = subTrack.title.UTF8String;
                     sub_config.offset = subTrack.offset;
 
                     // we need to strncpy file name and codeset
-                    strncpy(sub_config.src_filename, subTrack.fileURL.path.fileSystemRepresentation, 255);
-                    sub_config.src_filename[255] = 0;
+                    sub_config.src_filename = subTrack.fileURL.fileSystemRepresentation;
                     strncpy(sub_config.src_codeset, subTrack.charCode.UTF8String, 39);
                     sub_config.src_codeset[39] = 0;
 
-                    if (!subTrack.burnedIn && hb_subtitle_can_pass(SRTSUB, job->mux))
+                    if (!subTrack.burnedIn && hb_subtitle_can_pass(type, job->mux))
                     {
                         sub_config.dest = PASSTHRUSUB;
                     }
-                    else if (hb_subtitle_can_burn(SRTSUB))
+                    else if (hb_subtitle_can_burn(type))
                     {
                         sub_config.dest = RENDERSUB;
                     }
 
                     sub_config.force = 0;
                     sub_config.default_track = subTrack.def;
-                    hb_srt_add( job, &sub_config, subTrack.isoLanguage.UTF8String);
+                    hb_import_subtitle_add( job, &sub_config, subTrack.isoLanguage.UTF8String, type);
                 }
                 else
                 {
@@ -293,6 +298,7 @@
                     if (subt != NULL)
                     {
                         hb_subtitle_config_t sub_config = subt->config;
+                        sub_config.name = subTrack.title.UTF8String;
 
                         if (!subTrack.burnedIn && hb_subtitle_can_pass(subt->source, job->mux))
                         {
@@ -312,7 +318,7 @@
         }
     }
 
-    // Audio Defaults
+    // Audio Defaults (Selection Behavior)
     job->acodec_copy_mask = 0;
 
     HBAudioDefaults *audioDefaults = self.audio.defaults;
@@ -336,6 +342,10 @@
     if (audioDefaults.allowDTSPassthru)
     {
         job->acodec_copy_mask |= HB_ACODEC_DCA_PASS;
+    }
+    if (audioDefaults.allowMP2Passthru)
+    {
+        job->acodec_copy_mask |= HB_ACODEC_MP2_PASS;
     }
     if (audioDefaults.allowMP3Passthru)
     {
@@ -361,10 +371,10 @@
             hb_audio_config_t *audio = (hb_audio_config_t *)calloc(1, sizeof(*audio));
             hb_audio_config_init(audio);
 
-            NSDictionary *inputTrack = self.audio.sourceTracks[audioTrack.sourceTrackIdx];
+            HBTitleAudioTrack *inputTrack = self.audio.sourceTracks[audioTrack.sourceTrackIdx];
 
             int sampleRateToUse = (audioTrack.sampleRate == 0 ?
-                                   [inputTrack[keyAudioInputSampleRate] intValue] :
+                                   inputTrack.sampleRate :
                                    audioTrack.sampleRate);
 
             audio->in.track = (int)audioTrack.sourceTrackIdx - 1;
@@ -378,6 +388,7 @@
             audio->out.bitrate                   = audioTrack.bitRate;
             audio->out.samplerate                = sampleRateToUse;
             audio->out.dither_method             = hb_audio_dither_get_default();
+            audio->out.name                      = audioTrack.title.UTF8String;
 
             // output is not passthru so apply gain
             if (!(audioTrack.encoder & HB_ACODEC_PASS_FLAG))
@@ -390,8 +401,8 @@
                 audio->out.gain = 0;
             }
 
-            if (hb_audio_can_apply_drc([inputTrack[keyAudioInputCodec] intValue],
-                                       [inputTrack[keyAudioInputCodecParam] intValue],
+            if (hb_audio_can_apply_drc(inputTrack.codec,
+                                       inputTrack.codecParam,
                                        audioTrack.encoder))
             {
                 audio->out.dynamic_range_compression = audioTrack.drc;
@@ -473,11 +484,17 @@
         hb_dict_free(&filter_dict);
     }
 
-    // Deblock (uses pp7 default)
-    if (self.filters.deblock)
+    // Deblock
+    if (![self.filters.deblock isEqualToString:@"off"])
     {
-        filter = hb_filter_init(HB_FILTER_DEBLOCK);
-        hb_add_filter(job, filter, [NSString stringWithFormat:@"qp=%d", self.filters.deblock].UTF8String);
+        int filter_id = HB_FILTER_DEBLOCK;
+        hb_dict_t *filter_dict = hb_generate_filter_settings(filter_id,
+                                                             self.filters.deblock.UTF8String,
+                                                             self.filters.deblockTune.UTF8String,
+                                                             self.filters.deblockCustomString.UTF8String);
+        filter = hb_filter_init(filter_id);
+        hb_add_filter_dict(job, filter, filter_dict);
+        hb_value_free(&filter_dict);
     }
 
     // Add Crop/Scale filter
@@ -489,6 +506,24 @@
                     self.picture.cropTop, self.picture.cropBottom,
                     self.picture.cropLeft, self.picture.cropRight].UTF8String);
 
+    // Sharpen
+    if (![self.filters.sharpen isEqualToString:@"off"])
+    {
+        int filter_id = HB_FILTER_UNSHARP;
+        if ([self.filters.sharpen isEqualToString:@"lapsharp"])
+        {
+            filter_id = HB_FILTER_LAPSHARP;
+        }
+
+        hb_dict_t *filter_dict = hb_generate_filter_settings(filter_id,
+                                                  self.filters.sharpenPreset.UTF8String,
+                                                  self.filters.sharpenTune.UTF8String,
+                                                  self.filters.sharpenCustomString.UTF8String);
+        filter = hb_filter_init(filter_id);
+        hb_add_filter_dict(job, filter, filter_dict);
+        hb_dict_free(&filter_dict);
+    }
+
     // Add grayscale filter
     if (self.filters.grayscale)
     {
@@ -497,12 +532,64 @@
     }
 
     // Add rotate filter
-    if (self.filters.rotate || self.filters.flip)
+    if (self.picture.rotate || self.picture.flip)
     {
         int filter_id = HB_FILTER_ROTATE;
         hb_dict_t *filter_dict = hb_generate_filter_settings(filter_id,
                                                              NULL, NULL,
-                                                             [NSString stringWithFormat:@"angle=%d:hflip=%d", self.filters.rotate, self.filters.flip].UTF8String);
+                                                             [NSString stringWithFormat:@"angle=%d:hflip=%d", self.picture.rotate, self.picture.flip].UTF8String);
+
+        filter = hb_filter_init(filter_id);
+        hb_add_filter_dict(job, filter, filter_dict);
+        hb_dict_free(&filter_dict);
+    }
+
+    if (self.picture.paddingMode != HBPicturePaddingModeNone)
+    {
+        int filter_id = HB_FILTER_PAD;
+        NSString *color;
+        switch (self.picture.paddingColorMode) {
+            case HBPicturePaddingColorModeBlack:
+                color = @"black";
+                break;
+            case HBPicturePaddingColorModeWhite:
+                color = @"white";
+                break;
+            case HBPicturePaddingColorModeCustom:
+                color = self.picture.paddingColorCustom;
+                break;
+        }
+        int width, height, paddingLeft, paddingTop;
+        switch (self.picture.rotate) {
+            case 90:
+                width = self.picture.height + self.picture.paddingTop + self.picture.paddingBottom;
+                height = self.picture.width + self.picture.paddingLeft + self.picture.paddingRight;
+                paddingLeft = self.picture.paddingBottom;
+                paddingTop = self.picture.paddingLeft;
+                break;
+            case 180:
+                width = self.picture.width + self.picture.paddingLeft + self.picture.paddingRight;
+                height = self.picture.height + self.picture.paddingTop + self.picture.paddingBottom;
+                paddingLeft = self.picture.paddingRight;
+                paddingTop = self.picture.paddingBottom;
+                break;
+            case 270:
+                width = self.picture.height + self.picture.paddingTop + self.picture.paddingBottom;
+                height = self.picture.width + self.picture.paddingLeft + self.picture.paddingRight;
+                paddingLeft = self.picture.paddingTop;
+                paddingTop = self.picture.paddingRight;
+                break;
+            case 0:
+            default:
+                width = self.picture.width + self.picture.paddingLeft + self.picture.paddingRight;
+                height = self.picture.height + self.picture.paddingTop + self.picture.paddingBottom;
+                paddingLeft = self.picture.paddingLeft;
+                paddingTop = self.picture.paddingTop;
+                break;
+        }
+        NSString *settings = [NSString stringWithFormat:@"width=%d:height=%d:color=%@:x=%d:y=%d",
+                              width, height, color, paddingLeft, paddingTop];
+        hb_dict_t *filter_dict = hb_generate_filter_settings(filter_id, NULL, NULL, settings.UTF8String);
 
         filter = hb_filter_init(filter_id);
         hb_add_filter_dict(job, filter, filter_dict);
@@ -513,7 +600,7 @@
     filter = hb_filter_init(HB_FILTER_VFR);
     hb_add_filter(job, filter, [[NSString stringWithFormat:@"mode=%d:rate=%d/%d",
                                  fps_mode, fps_num, fps_den] UTF8String]);
-    
+
     return job;
 }
 

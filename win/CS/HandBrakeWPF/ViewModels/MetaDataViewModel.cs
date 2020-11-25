@@ -9,8 +9,11 @@
 
 namespace HandBrakeWPF.ViewModels
 {
+    using System;
+
     using Caliburn.Micro;
 
+    using HandBrakeWPF.EventArgs;
     using HandBrakeWPF.Services.Encode.Model;
     using HandBrakeWPF.Services.Encode.Model.Models;
     using HandBrakeWPF.Services.Interfaces;
@@ -24,7 +27,6 @@ namespace HandBrakeWPF.ViewModels
     public class MetaDataViewModel : ViewModelBase, IMetaDataViewModel
     {
         private EncodeTask task;
-        private MetaData metaData;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="MetaDataViewModel"/> class. 
@@ -37,30 +39,10 @@ namespace HandBrakeWPF.ViewModels
         /// </param>
         public MetaDataViewModel(IWindowManager windowManager, IUserSettingService userSettingService)
         {
-            this.Task = new EncodeTask();
+            this.task = new EncodeTask();
         }
 
-        /// <summary>
-        /// The Current Job
-        /// </summary>
-        public EncodeTask Task
-        {
-            get
-            {
-                return this.task;
-            }
-            set
-            {
-                this.task = value;
-
-                if (this.task != null)
-                {
-                    this.MetaData = this.task.MetaData;
-                }
-               
-                this.NotifyOfPropertyChange(() => this.Task);
-            }
-        }
+        public event EventHandler<TabStatusEventArgs> TabStatusChanged { add { } remove { } }
 
         /// <summary>
         /// Gets or sets the meta data.
@@ -69,11 +51,12 @@ namespace HandBrakeWPF.ViewModels
         {
             get
             {
-                return this.metaData;
+                return this.task.MetaData;
             }
+
             set
             {
-                this.metaData = value;
+                this.task.MetaData = value;
                 this.NotifyOfPropertyChange(() => this.MetaData);
             }
         }
@@ -95,7 +78,10 @@ namespace HandBrakeWPF.ViewModels
         /// </param>
         public void SetSource(Source source, Title selectedTitle, Preset currentPreset, EncodeTask encodeTask)
         {
-            this.Task = encodeTask;
+            return; // Disabled for now.
+            // this.task = encodeTask;
+            // this.task.MetaData = new MetaData(selectedTitle.Metadata);
+            // this.NotifyOfPropertyChange(() => this.MetaData);
         }
 
         /// <summary>
@@ -109,7 +95,6 @@ namespace HandBrakeWPF.ViewModels
         /// </param>
         public void SetPreset(Preset preset, EncodeTask encodeTask)
         {
-            this.Task = encodeTask;
         }
 
         /// <summary>
@@ -120,7 +105,13 @@ namespace HandBrakeWPF.ViewModels
         /// </param>
         public void UpdateTask(EncodeTask encodeTask)
         {
-            this.Task = encodeTask;
+            this.task = encodeTask;
+            this.NotifyOfPropertyChange(() => this.MetaData);
+        }
+
+        public bool MatchesPreset(Preset preset)
+        {
+            return true;
         }
     }
 }

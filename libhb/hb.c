@@ -1,23 +1,23 @@
 /* hb.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "hb.h"
-#include "opencl.h"
-#include "hbffmpeg.h"
-#include "encx264.h"
+#include "handbrake/handbrake.h"
+#include "handbrake/hbffmpeg.h"
+#include "handbrake/encx264.h"
 #include "libavfilter/avfilter.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <turbojpeg.h>
 
-#ifdef USE_QSV
-#include "qsv_common.h"
+#if HB_PROJECT_FEATURE_QSV
+#include "handbrake/qsv_common.h"
 #endif
 
 #if defined( SYS_MINGW )
@@ -55,6 +55,8 @@ struct hb_handle_s
 
     int            paused;
     hb_lock_t    * pause_lock;
+    int64_t        pause_date;
+    int64_t        pause_duration;
 
     volatile int   scan_die;
 
@@ -65,54 +67,16 @@ struct hb_handle_s
 
     // power management opaque pointer
     void         * system_sleep_opaque;
-
-    int            enable_opencl;
 };
 
 hb_work_object_t * hb_objects = NULL;
 int hb_instance_counter = 0;
+int disable_hardware = 0;
 
 static void thread_func( void * );
 
-static int ff_lockmgr_cb(void **mutex, enum AVLockOp op)
-{
-    switch ( op )
-    {
-        case AV_LOCK_CREATE:
-        {
-            *mutex  = hb_lock_init();
-        } break;
-        case AV_LOCK_DESTROY:
-        {
-            hb_lock_close( (hb_lock_t**)mutex );
-        } break;
-        case AV_LOCK_OBTAIN:
-        {
-            hb_lock( (hb_lock_t*)*mutex );
-        } break;
-        case AV_LOCK_RELEASE:
-        {
-            hb_unlock( (hb_lock_t*)*mutex );
-        } break;
-        default:
-            break;
-    }
-    return 0;
-}
-
 void hb_avcodec_init()
 {
-    av_lockmgr_register(ff_lockmgr_cb);
-    av_register_all();
-    avfilter_register_all();
-#ifdef _WIN64
-    // avresample's assembly optimizations can cause crashes under Win x86_64
-    // (see http://bugzilla.libav.org/show_bug.cgi?id=496)
-    // disable AVX and FMA4 as a workaround
-    hb_deep_log(2, "hb_avcodec_init: Windows x86_64, disabling AVX and FMA4");
-    int cpu_flags = av_get_cpu_flags() & ~AV_CPU_FLAG_AVX & ~AV_CPU_FLAG_FMA4;
-    av_set_cpu_flags_mask(cpu_flags);
-#endif
 }
 
 int hb_avcodec_open(AVCodecContext *avctx, AVCodec *codec,
@@ -133,7 +97,7 @@ int hb_avcodec_open(AVCodecContext *avctx, AVCodec *codec,
         avctx->thread_count = 1;
     }
 
-    if (codec->capabilities & CODEC_CAP_EXPERIMENTAL)
+    if (codec->capabilities & AV_CODEC_CAP_EXPERIMENTAL)
     {
         // "experimental" encoders will not open without this
         avctx->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
@@ -143,16 +107,9 @@ int hb_avcodec_open(AVCodecContext *avctx, AVCodec *codec,
     return ret;
 }
 
-int hb_get_opencl_enabled(hb_handle_t *h)
+void hb_avcodec_free_context(AVCodecContext **avctx)
 {
-    return h->enable_opencl;
-}
-
-int hb_avcodec_close(AVCodecContext *avctx)
-{
-    int ret;
-    ret = avcodec_close(avctx);
-    return ret;
+    avcodec_free_context(avctx);
 }
 
 
@@ -160,8 +117,10 @@ int hb_picture_fill(uint8_t *data[], int stride[], hb_buffer_t *buf)
 {
     int ret, ii;
 
-    for (ii = 0; ii < 4; ii++)
+    for (ii = 0; ii <= buf->f.max_plane; ii++)
         stride[ii] = buf->plane[ii].stride;
+    for (; ii < 4; ii++)
+        stride[ii] = stride[ii - 1];
 
     ret = av_image_fill_pointers(data, buf->f.fmt,
                                  buf->plane[0].height_stride,
@@ -191,197 +150,14 @@ int hb_picture_crop(uint8_t *data[], int stride[], hb_buffer_t *buf,
               (left >> x_shift);
     data[2] = buf->plane[2].data + (top >> y_shift) * buf->plane[2].stride +
               (left >> x_shift);
+    data[3] = NULL;
 
     stride[0] = buf->plane[0].stride;
     stride[1] = buf->plane[1].stride;
     stride[2] = buf->plane[2].stride;
+    stride[3] = 0;
 
     return 0;
-}
-
-static int handle_jpeg(enum AVPixelFormat *format)
-{
-    switch (*format)
-    {
-        case AV_PIX_FMT_YUVJ420P: *format = AV_PIX_FMT_YUV420P; return 1;
-        case AV_PIX_FMT_YUVJ422P: *format = AV_PIX_FMT_YUV422P; return 1;
-        case AV_PIX_FMT_YUVJ444P: *format = AV_PIX_FMT_YUV444P; return 1;
-        case AV_PIX_FMT_YUVJ440P: *format = AV_PIX_FMT_YUV440P; return 1;
-        default:                                                return 0;
-    }
-}
-
-int hb_ff_get_colorspace(int color_matrix)
-{
-    int color_space = SWS_CS_DEFAULT;
-
-    switch (color_matrix)
-    {
-        case HB_COLR_MAT_SMPTE170M:
-            color_space = SWS_CS_ITU601;
-            break;
-        case HB_COLR_MAT_SMPTE240M:
-            color_space = SWS_CS_SMPTE240M;
-            break;
-        case HB_COLR_MAT_BT709:
-            color_space = SWS_CS_ITU709;
-            break;
-        /* enable this when implemented in Libav
-        case HB_COLR_MAT_BT2020:
-            color_space = SWS_CS_BT2020;
-            break;
-         */
-        default:
-            break;
-    }
-
-    return color_space;
-}
-
-struct SwsContext*
-hb_sws_get_context(int srcW, int srcH, enum AVPixelFormat srcFormat,
-                   int dstW, int dstH, enum AVPixelFormat dstFormat,
-                   int flags, int colorspace)
-{
-    struct SwsContext * ctx;
-
-    ctx = sws_alloc_context();
-    if ( ctx )
-    {
-        int srcRange, dstRange;
-
-        srcRange = handle_jpeg(&srcFormat);
-        dstRange = handle_jpeg(&dstFormat);
-        flags |= SWS_FULL_CHR_H_INT | SWS_FULL_CHR_H_INP;
-
-        av_opt_set_int(ctx, "srcw", srcW, 0);
-        av_opt_set_int(ctx, "srch", srcH, 0);
-        av_opt_set_int(ctx, "src_range", srcRange, 0);
-        av_opt_set_int(ctx, "src_format", srcFormat, 0);
-        av_opt_set_int(ctx, "dstw", dstW, 0);
-        av_opt_set_int(ctx, "dsth", dstH, 0);
-        av_opt_set_int(ctx, "dst_range", dstRange, 0);
-        av_opt_set_int(ctx, "dst_format", dstFormat, 0);
-        av_opt_set_int(ctx, "sws_flags", flags, 0);
-
-        sws_setColorspaceDetails( ctx,
-                      sws_getCoefficients( colorspace ), // src colorspace
-                      srcRange, // src range 0 = MPG, 1 = JPG
-                      sws_getCoefficients( colorspace ), // dst colorspace
-                      dstRange, // dst range 0 = MPG, 1 = JPG
-                      0,         // brightness
-                      1 << 16,   // contrast
-                      1 << 16 ); // saturation
-
-        if (sws_init_context(ctx, NULL, NULL) < 0) {
-            hb_error("Cannot initialize resampling context");
-            sws_freeContext(ctx);
-            ctx = NULL;
-        }
-    }
-    return ctx;
-}
-
-uint64_t hb_ff_mixdown_xlat(int hb_mixdown, int *downmix_mode)
-{
-    uint64_t ff_layout = 0;
-    int mode = AV_MATRIX_ENCODING_NONE;
-    switch (hb_mixdown)
-    {
-        // Passthru
-        case HB_AMIXDOWN_NONE:
-            break;
-
-        case HB_AMIXDOWN_MONO:
-        case HB_AMIXDOWN_LEFT:
-        case HB_AMIXDOWN_RIGHT:
-            ff_layout = AV_CH_LAYOUT_MONO;
-            break;
-
-        case HB_AMIXDOWN_DOLBY:
-            ff_layout = AV_CH_LAYOUT_STEREO;
-            mode = AV_MATRIX_ENCODING_DOLBY;
-            break;
-
-        case HB_AMIXDOWN_DOLBYPLII:
-            ff_layout = AV_CH_LAYOUT_STEREO;
-            mode = AV_MATRIX_ENCODING_DPLII;
-            break;
-
-        case HB_AMIXDOWN_STEREO:
-            ff_layout = AV_CH_LAYOUT_STEREO;
-            break;
-
-        case HB_AMIXDOWN_5POINT1:
-            ff_layout = AV_CH_LAYOUT_5POINT1;
-            break;
-
-        case HB_AMIXDOWN_6POINT1:
-            ff_layout = AV_CH_LAYOUT_6POINT1;
-            break;
-
-        case HB_AMIXDOWN_7POINT1:
-            ff_layout = AV_CH_LAYOUT_7POINT1;
-            break;
-
-        case HB_AMIXDOWN_5_2_LFE:
-            ff_layout = (AV_CH_LAYOUT_5POINT1_BACK|
-                         AV_CH_FRONT_LEFT_OF_CENTER|
-                         AV_CH_FRONT_RIGHT_OF_CENTER);
-            break;
-
-        default:
-            ff_layout = AV_CH_LAYOUT_STEREO;
-            hb_log("hb_ff_mixdown_xlat: unsupported mixdown %d", hb_mixdown);
-            break;
-    }
-    if (downmix_mode != NULL)
-        *downmix_mode = mode;
-    return ff_layout;
-}
-
-/*
- * Set sample format to the request format if supported by the codec.
- * The planar/packed variant of the requested format is the next best thing.
- */
-void hb_ff_set_sample_fmt(AVCodecContext *context, AVCodec *codec,
-                          enum AVSampleFormat request_sample_fmt)
-{
-    if (context != NULL && codec != NULL &&
-        codec->type == AVMEDIA_TYPE_AUDIO && codec->sample_fmts != NULL)
-    {
-        const enum AVSampleFormat *fmt;
-        enum AVSampleFormat next_best_fmt;
-
-        next_best_fmt = (av_sample_fmt_is_planar(request_sample_fmt)  ?
-                         av_get_packed_sample_fmt(request_sample_fmt) :
-                         av_get_planar_sample_fmt(request_sample_fmt));
-
-        context->request_sample_fmt = AV_SAMPLE_FMT_NONE;
-
-        for (fmt = codec->sample_fmts; *fmt != AV_SAMPLE_FMT_NONE; fmt++)
-        {
-            if (*fmt == request_sample_fmt)
-            {
-                context->request_sample_fmt = request_sample_fmt;
-                break;
-            }
-            else if (*fmt == next_best_fmt)
-            {
-                context->request_sample_fmt = next_best_fmt;
-            }
-        }
-
-        /*
-         * When encoding and AVCodec.sample_fmts exists, avcodec_open2()
-         * will error out if AVCodecContext.sample_fmt isn't set.
-         */
-        if (context->request_sample_fmt == AV_SAMPLE_FMT_NONE)
-        {
-            context->request_sample_fmt = codec->sample_fmts[0];
-        }
-        context->sample_fmt = context->request_sample_fmt;
-    }
 }
 
 /**
@@ -416,14 +192,6 @@ void hb_log_level_set(hb_handle_t *h, int level)
     global_verbosity_level = level;
 }
 
-/*
- * Enable or disable support for OpenCL detection.
- */
-void hb_opencl_set_enable(hb_handle_t *h, int enable_opencl)
-{
-    h->enable_opencl = enable_opencl;
-}
-
 /**
  * libhb initialization routine.
  * @param verbose HB_DEBUG_NONE or HB_DEBUG_ALL.
@@ -448,6 +216,7 @@ hb_handle_t * hb_init( int verbose )
     h->state.state = HB_STATE_IDLE;
 
     h->pause_lock = hb_lock_init();
+    h->pause_date = -1;
 
     h->interjob = calloc( sizeof( hb_interjob_t ), 1 );
 
@@ -540,17 +309,20 @@ int hb_get_build( hb_handle_t * h )
  */
 void hb_remove_previews( hb_handle_t * h )
 {
-    char            filename[1024];
-    char            dirname[1024];
+    char          * filename;
+    char          * dirname;
     hb_title_t    * title;
     int             i, count, len;
     DIR           * dir;
     struct dirent * entry;
 
-    memset( dirname, 0, 1024 );
-    hb_get_temporary_directory( dirname );
+    dirname = hb_get_temporary_directory();
     dir = opendir( dirname );
-    if (dir == NULL) return;
+    if (dir == NULL)
+    {
+        free(dirname);
+        return;
+    }
 
     count = hb_list_count( h->title_set.list_title );
     while( ( entry = readdir( dir ) ) )
@@ -562,15 +334,23 @@ void hb_remove_previews( hb_handle_t * h )
         for( i = 0; i < count; i++ )
         {
             title = hb_list_item( h->title_set.list_title, i );
+            filename = hb_strdup_printf("%d_%d", h->id, title->index);
             len = snprintf( filename, 1024, "%d_%d", h->id, title->index );
             if (strncmp(entry->d_name, filename, len) == 0)
             {
-                snprintf( filename, 1024, "%s/%s", dirname, entry->d_name );
-                unlink( filename );
+                free(filename);
+                filename = hb_strdup_printf("%s/%s", dirname, entry->d_name);
+                int ulerr = unlink( filename );
+                if (ulerr < 0) {
+                    hb_log("Unable to remove preview: %i - %s", ulerr, filename);
+                }
+                free(filename);
                 break;
             }
+            free(filename);
         }
     }
+    free(dirname);
     closedir( dir );
 }
 
@@ -588,7 +368,7 @@ void hb_scan( hb_handle_t * h, const char * path, int title_index,
     hb_title_t * title;
 
     // Check if scanning is necessary.
-    if (!strcmp(h->title_set.path, path))
+    if (h->title_set.path != NULL && !strcmp(h->title_set.path, path))
     {
         // Current title_set path matches requested path.
         // Check if the requested title has already been scanned.
@@ -631,6 +411,8 @@ void hb_scan( hb_handle_t * h, const char * path, int title_index,
         hb_list_rem( h->title_set.list_title, title );
         hb_title_close( &title );
     }
+    free((char*)h->title_set.path);
+    h->title_set.path = NULL;
 
     /* Print CPU info here so that it's in all scan and encode logs */
     const char *cpu_name = hb_get_cpu_name();
@@ -642,15 +424,12 @@ void hb_scan( hb_handle_t * h, const char * path, int title_index,
     }
     hb_log(" - logical processor count: %d", hb_get_cpu_count());
 
-    /* Print OpenCL info here so that it's in all scan and encode logs */
-    if (hb_get_opencl_enabled(h))
+#if HB_PROJECT_FEATURE_QSV
+    if (!is_hardware_disabled())
     {
-        hb_opencl_info_print();
+        /* Print QSV info here so that it's in all scan and encode logs */
+        hb_qsv_info_print();
     }
-
-#ifdef USE_QSV
-    /* Print QSV info here so that it's in all scan and encode logs */
-    hb_qsv_info_print();
 #endif
 
     hb_log( "hb_scan: path=%s, title_index=%d", path, title_index );
@@ -661,7 +440,8 @@ void hb_scan( hb_handle_t * h, const char * path, int title_index,
 
 void hb_force_rescan( hb_handle_t * h )
 {
-    h->title_set.path[0] = 0;
+    free((char*)h->title_set.path);
+    h->title_set.path = NULL;
 }
 
 /**
@@ -679,110 +459,259 @@ hb_title_set_t * hb_get_title_set( hb_handle_t * h )
     return &h->title_set;
 }
 
-int hb_save_preview( hb_handle_t * h, int title, int preview, hb_buffer_t *buf )
+int hb_save_preview( hb_handle_t * h, int title, int preview, hb_buffer_t *buf, int format )
 {
-    FILE * file;
-    char   filename[1024];
-    char   reason[80];
+    FILE    * file;
+    char    * filename;
+    char      reason[80];
+    const int planes_max   = 3;
+    const int format_chars = 4;
+    char      format_string[format_chars];
 
-    hb_get_tempory_filename( h, filename, "%d_%d_%d",
-                             hb_get_instance_id(h), title, preview );
+    switch (format)
+    {
+        case HB_PREVIEW_FORMAT_YUV:
+            strncpy(format_string, "yuv", format_chars);
+            break;
+        case HB_PREVIEW_FORMAT_JPG:
+            strncpy(format_string, "jpg", format_chars);
+            break;
+        default:
+            hb_error("hb_save_preview: Unsupported preview format %d", format);
+            return -1;
+    }
+
+    filename = hb_get_temporary_filename("%d_%d_%d.%s", hb_get_instance_id(h),
+                                         title, preview, format_string);
 
     file = hb_fopen(filename, "wb");
-    if( !file )
+    if (file == NULL)
     {
         if (strerror_r(errno, reason, 79) != 0)
+        {
             strcpy(reason, "unknown -- strerror_r() failed");
-
-        hb_error( "hb_save_preview: Failed to open %s (reason: %s)", filename, reason );
+        }
+        hb_error("hb_save_preview: Failed to open %s (reason: %s)",
+                 filename, reason);
+        free(filename);
         return -1;
     }
 
-    int pp, hh;
-    for( pp = 0; pp < 3; pp++ )
+    if (format == HB_PREVIEW_FORMAT_YUV)
     {
-        uint8_t *data = buf->plane[pp].data;
-        int stride = buf->plane[pp].stride;
-        int w = buf->plane[pp].width;
-        int h = buf->plane[pp].height;
-
-        for( hh = 0; hh < h; hh++ )
+        int pp, hh;
+        for(pp = 0; pp < planes_max; pp++)
         {
-            if (fwrite( data, w, 1, file ) < w)
-            {
-                if (ferror(file))
-                {
-                    if (strerror_r(errno, reason, 79) != 0)
-                        strcpy(reason, "unknown -- strerror_r() failed");
+            const uint8_t * data = buf->plane[pp].data;
+            const int     stride = buf->plane[pp].stride;
+            const int          w = buf->plane[pp].width;
+            const int          h = buf->plane[pp].height;
 
-                    hb_error( "hb_save_preview: Failed to write line %d to %s (reason: %s). Preview will be incomplete.",
-                              hh, filename, reason );
-                    goto done;
+            for(hh = 0; hh < h; hh++)
+            {
+                if (fwrite(data, w, 1, file) < w)
+                {
+                    if (ferror(file))
+                    {
+                        if (strerror_r(errno, reason, 79) != 0)
+                        {
+                            strcpy(reason, "unknown -- strerror_r() failed");
+                        }
+                        hb_error("hb_save_preview: Failed to write line %d to %s "
+                                 "(reason: %s). Preview will be incomplete.",
+                                 hh, filename, reason);
+                        goto done;
+                    }
                 }
+                data += stride;
             }
-            data += stride;
         }
+    }
+    else if (format == HB_PREVIEW_FORMAT_JPG)
+    {
+        tjhandle        jpeg_compressor = tjInitCompress();
+        const int       jpeg_quality = 90;
+        unsigned long   jpeg_size    = 0;
+        unsigned char * jpeg_data    = NULL;
+        int             planes_stride[planes_max];
+        uint8_t       * planes_data[planes_max];
+        int             pp, compressor_result;
+        for (pp = 0; pp < planes_max; pp++)
+        {
+            planes_stride[pp] = buf->plane[pp].stride;
+            planes_data[pp]   = buf->plane[pp].data;
+        }
+
+        compressor_result = tjCompressFromYUVPlanes(jpeg_compressor,
+                                                    (const unsigned char **)planes_data,
+                                                    buf->plane[0].width,
+                                                    planes_stride,
+                                                    buf->plane[0].height,
+                                                    TJSAMP_420,
+                                                    &jpeg_data,
+                                                    &jpeg_size,
+                                                    jpeg_quality,
+                                                    TJFLAG_FASTDCT);
+        if (compressor_result == 0)
+        {
+            const size_t ret = fwrite(jpeg_data, jpeg_size, 1, file);
+            if ((ret < jpeg_size) && (ferror(file)))
+            {
+                if (strerror_r(errno, reason, 79) != 0)
+                {
+                    strcpy(reason, "unknown -- strerror_r() failed");
+                }
+                hb_error("hb_save_preview: Failed to write to %s "
+                         "(reason: %s).", filename, reason);
+            }
+        }
+        else
+        {
+            hb_error("hb_save_preview: JPEG compression failed for "
+                     "preview image %s", filename);
+        }
+
+        tjDestroy(jpeg_compressor);
+        tjFree(jpeg_data);
     }
 
 done:
-    fclose( file );
+    free(filename);
+    fclose(file);
 
     return 0;
 }
 
-hb_buffer_t * hb_read_preview(hb_handle_t * h, hb_title_t *title, int preview)
+hb_buffer_t * hb_read_preview(hb_handle_t * h, hb_title_t *title, int preview, int format)
 {
-    FILE * file;
-    char   filename[1024];
-    char   reason[80];
-
-    hb_get_tempory_filename(h, filename, "%d_%d_%d",
-                            hb_get_instance_id(h), title->index, preview);
-
-    file = hb_fopen(filename, "rb");
-    if (!file)
-    {
-        if (strerror_r(errno, reason, 79) != 0)
-            strcpy(reason, "unknown -- strerror_r() failed");
-
-        hb_error( "hb_read_preview: Failed to open %s (reason: %s)", filename, reason );
-        return NULL;
-    }
+    FILE    * file = NULL;
+    char    * filename = NULL;
+    char      reason[80];
+    const int planes_max   = 3;
+    const int format_chars = 4;
+    char      format_string[format_chars];
 
     hb_buffer_t * buf;
     buf = hb_frame_buffer_init(AV_PIX_FMT_YUV420P,
                                title->geometry.width, title->geometry.height);
 
     if (!buf)
-        goto done;
-
-    int pp, hh;
-    for (pp = 0; pp < 3; pp++)
     {
-        uint8_t *data = buf->plane[pp].data;
-        int stride = buf->plane[pp].stride;
-        int w = buf->plane[pp].width;
-        int h = buf->plane[pp].height;
+        goto done;
+    }
 
-        for (hh = 0; hh < h; hh++)
+    switch (format)
+    {
+        case HB_PREVIEW_FORMAT_YUV:
+            strncpy(format_string, "yuv", format_chars);
+            break;
+        case HB_PREVIEW_FORMAT_JPG:
+            strncpy(format_string, "jpg", format_chars);
+            break;
+        default:
+            hb_error("hb_read_preview: Unsupported preview format %d", format);
+            return buf;
+    }
+
+    filename = hb_get_temporary_filename("%d_%d_%d.%s", hb_get_instance_id(h),
+                                         title->index, preview, format_string);
+
+    file = hb_fopen(filename, "rb");
+    if (file == NULL)
+    {
+        if (strerror_r(errno, reason, 79) != 0)
         {
-            if (fread(data, w, 1, file) < w)
-            {
-                if (ferror(file))
-                {
-                    if (strerror_r(errno, reason, 79) != 0)
-                        strcpy(reason, "unknown -- strerror_r() failed");
-
-                    hb_error( "hb_read_preview: Failed to read line %d from %s (reason: %s). Preview will be incomplete.",
-                          hh, filename, reason );
-                    goto done;
-                }
-            }
-            data += stride;
+            strcpy(reason, "unknown -- strerror_r() failed");
         }
+        hb_error("hb_read_preview: Failed to open %s (reason: %s)",
+                 filename, reason);
+        free(filename);
+        return NULL;
+    }
+
+    if (format == HB_PREVIEW_FORMAT_YUV)
+    {
+        int pp, hh;
+        for (pp = 0; pp < planes_max; pp++)
+        {
+            uint8_t       * data = buf->plane[pp].data;
+            const int     stride = buf->plane[pp].stride;
+            const int          w = buf->plane[pp].width;
+            const int          h = buf->plane[pp].height;
+
+            for (hh = 0; hh < h; hh++)
+            {
+                if (fread(data, w, 1, file) < w)
+                {
+                    if (ferror(file))
+                    {
+                        if (strerror_r(errno, reason, 79) != 0)
+                        {
+                            strcpy(reason, "unknown -- strerror_r() failed");
+                        }
+                        hb_error("hb_read_preview: Failed to read line %d from %s "
+                                 "(reason: %s). Preview will be incomplete.",
+                                 hh, filename, reason );
+                        goto done;
+                    }
+                }
+                data += stride;
+            }
+        }
+    }
+    else if (format == HB_PREVIEW_FORMAT_JPG)
+    {
+        fseek(file, 0, SEEK_END);
+        unsigned long jpeg_size = ftell(file);
+        fseek(file, 0, SEEK_SET);
+        unsigned char * jpeg_data = tjAlloc(jpeg_size + 1);
+        jpeg_data[jpeg_size] = 0;
+
+        const size_t ret = fread(jpeg_data, jpeg_size, 1, file);
+        {
+            if ((ret < jpeg_size) && (ferror(file)))
+            {
+                if (strerror_r(errno, reason, 79) != 0)
+                {
+                    strcpy(reason, "unknown -- strerror_r() failed");
+                }
+                hb_error("hb_read_preview: Failed to read from %s "
+                         "(reason: %s).", filename, reason);
+                tjFree(jpeg_data);
+                goto done;
+            }
+        }
+
+        tjhandle   jpeg_decompressor = tjInitDecompress();
+        int        planes_stride[planes_max];
+        uint8_t  * planes_data[planes_max];
+        int        pp, decompressor_result;
+        for (pp = 0; pp < planes_max; pp++)
+        {
+            planes_stride[pp] = buf->plane[pp].stride;
+            planes_data[pp]   = buf->plane[pp].data;
+        }
+
+        decompressor_result = tjDecompressToYUVPlanes(jpeg_decompressor,
+                                                      jpeg_data,
+                                                      jpeg_size,
+                                                      (unsigned char **)planes_data,
+                                                      buf->plane[0].width,
+                                                      planes_stride,
+                                                      buf->plane[0].height,
+                                                      TJFLAG_FASTDCT);
+        if (decompressor_result != 0)
+        {
+            hb_error("hb_read_preview: JPEG decompression failed for "
+                     "preview image %s", filename);
+        }
+
+        tjDestroy(jpeg_decompressor);
+        tjFree(jpeg_data);
     }
 
 done:
+    free(filename);
     fclose(file);
 
     return buf;
@@ -829,7 +758,7 @@ hb_image_t* hb_get_preview2(hb_handle_t * h, int title_idx, int picture,
         goto fail;
     }
 
-    in_buf = hb_read_preview( h, title, picture );
+    in_buf = hb_read_preview( h, title, picture, HB_PREVIEW_FORMAT_JPG );
     if ( in_buf == NULL )
     {
         goto fail;
@@ -851,7 +780,7 @@ hb_image_t* hb_get_preview2(hb_handle_t * h, int title_idx, int picture,
                         geo->crop[0], geo->crop[2] );
     }
 
-    int colorspace = hb_ff_get_colorspace(title->color_matrix);
+    int colorspace = hb_sws_get_colorspace(title->color_matrix);
 
     // Get scaling context
     context = hb_sws_get_context(
@@ -926,7 +855,7 @@ int hb_detect_comb( hb_buffer_t * buf, int color_equal, int color_diff, int thre
     }
 
     /* One pas for Y, one pass for Cb, one pass for Cr */
-    for( k = 0; k < 3; k++ )
+    for( k = 0; k <= buf->f.max_plane; k++ )
     {
         uint8_t * data = buf->plane[k].data;
         int width = buf->plane[k].width;
@@ -965,7 +894,7 @@ int hb_detect_comb( hb_buffer_t * buf, int color_equal, int color_diff, int thre
         // compare results
         /*  The final cc score for a plane is the percentage of combed pixels it contains.
             Because sensitivity goes down to hundreths of a percent, multiply by 1000
-            so it will be easy to compare against the threhold value which is an integer. */
+            so it will be easy to compare against the threshold value which is an integer. */
         cc[k] = (int)( ( cc_1 + cc_2 ) * 1000.0 / ( width * height ) );
     }
 
@@ -1010,7 +939,7 @@ void hb_set_anamorphic_size2(hb_geometry_t *src_geo,
     int cropped_width = src_geo->width - geo->crop[2] - geo->crop[3];
     int cropped_height = src_geo->height - geo->crop[0] - geo->crop[1];
     double storage_aspect = (double)cropped_width / cropped_height;
-    int mod = geo->modulus ? EVEN(geo->modulus) : 2;
+    int mod = (geo->modulus > 0) ? EVEN(geo->modulus) : 2;
 
     // Sanitize PAR
     if (geo->geometry.par.num == 0 || geo->geometry.par.den == 0)
@@ -1361,7 +1290,7 @@ void hb_set_anamorphic_size2(hb_geometry_t *src_geo,
     hb_limit_rational64(&dst_par_num, &dst_par_den,
                         dst_par_num, dst_par_den, 65535);
 
-    // If the user is directling updating PAR, don't override his values.
+    // If the user is directing updating PAR, don't override his values.
     // I.e. don't even reduce the values.
     hb_reduce(&out_par.num, &out_par.den, dst_par_num, dst_par_den);
     if (geo->mode == HB_ANAMORPHIC_CUSTOM && !keep_display_aspect &&
@@ -1441,6 +1370,10 @@ void hb_add_filter_dict( hb_job_t * job, hb_filter_object_t * filter,
         settings = hb_value_dup(settings_in);
     }
     filter->settings = settings;
+    if (filter->sub_filter)
+    {
+        filter->sub_filter->settings = hb_value_dup(settings);
+    }
     if( filter->enforce_order )
     {
         // Find the position in the filter chain this filter belongs in
@@ -1723,25 +1656,28 @@ void hb_rem( hb_handle_t * h, hb_job_t * job )
 void hb_start( hb_handle_t * h )
 {
     hb_lock( h->state_lock );
-    h->state.state = HB_STATE_WORKING;
+    h->state.state       = HB_STATE_WORKING;
+    h->state.sequence_id = 0;
 #define p h->state.param.working
-    p.pass       = -1;
-    p.pass_count = -1;
-    p.progress  = 0.0;
-    p.rate_cur  = 0.0;
-    p.rate_avg  = 0.0;
-    p.hours     = -1;
-    p.minutes   = -1;
-    p.seconds   = -1;
-    p.sequence_id = 0;
+    p.pass         = -1;
+    p.pass_count   = -1;
+    p.progress     = 0.0;
+    p.rate_cur     = 0.0;
+    p.rate_avg     = 0.0;
+    p.eta_seconds  = 0;
+    p.hours        = -1;
+    p.minutes      = -1;
+    p.seconds      = -1;
+    p.paused       = 0;
 #undef p
     hb_unlock( h->state_lock );
 
-    h->paused = 0;
-
-    h->work_die    = 0;
-    h->work_error  = HB_ERROR_NONE;
-    h->work_thread = hb_work_init( h->jobs, &h->work_die, &h->work_error, &h->current_job );
+    h->paused         = 0;
+    h->pause_date     = -1;
+    h->pause_duration = 0;
+    h->work_die       = 0;
+    h->work_error     = HB_ERROR_NONE;
+    h->work_thread    = hb_work_init( h->jobs, &h->work_die, &h->work_error, &h->current_job );
 }
 
 /**
@@ -1755,7 +1691,7 @@ void hb_pause( hb_handle_t * h )
         hb_lock( h->pause_lock );
         h->paused = 1;
 
-        hb_current_job( h )->st_pause_date = hb_get_date();
+        h->pause_date = hb_get_date();
 
         hb_lock( h->state_lock );
         h->state.state = HB_STATE_PAUSED;
@@ -1771,12 +1707,17 @@ void hb_resume( hb_handle_t * h )
 {
     if( h->paused )
     {
-#define job hb_current_job( h )
-        if( job->st_pause_date != -1 )
+        if (h->pause_date != -1)
         {
-           job->st_paused += hb_get_date() - job->st_pause_date;
+            // Calculate paused time for current job sequence
+            h->pause_duration    += hb_get_date() - h->pause_date;
+
+            // Calculate paused time for current job pass
+            // Required to calculate accurate ETA for pass
+            h->current_job->st_paused += hb_get_date() - h->pause_date;
+            h->pause_date              = -1;
+            h->state.param.working.paused = h->pause_duration;
         }
-#undef job
 
         hb_unlock( h->pause_lock );
         h->paused = 0;
@@ -1848,6 +1789,8 @@ void hb_close( hb_handle_t ** _h )
         hb_title_close( &title );
     }
     hb_list_close( &h->title_set.list_title );
+    free((char*)h->title_set.path);
+    h->title_set.path = NULL;
 
     hb_list_close( &h->jobs );
     hb_lock_close( &h->state_lock );
@@ -1861,8 +1804,20 @@ void hb_close( hb_handle_t ** _h )
     *_h = NULL;
 }
 
+int hb_global_init_no_hardware()
+{
+    disable_hardware = 1;
+    hb_log( "Init: Hardware encoders are disabled." );
+    return hb_global_init();
+}
+
 int hb_global_init()
 {
+    /* Print hardening status on global init */
+#if HB_PROJECT_SECURITY_HARDEN
+    hb_log( "Compile-time hardening features are enabled" );
+#endif
+
     int result = 0;
 
     result = hb_platform_init();
@@ -1872,14 +1827,17 @@ int hb_global_init()
         return -1;
     }
 
-#ifdef USE_QSV
-    result = hb_qsv_info_init();
-    if (result < 0)
+#if HB_PROJECT_FEATURE_QSV
+    if (!disable_hardware)
     {
-        hb_error("hb_qsv_info_init failed!");
-        return -1;
+        result = hb_qsv_info_init();
+        if (result < 0)
+        {
+            hb_error("hb_qsv_info_init failed!");
+            return -1;
+        }
+        hb_param_configure_qsv();
     }
-    hb_param_configure_qsv();
 #endif
 
     /* libavcodec */
@@ -1894,14 +1852,10 @@ int hb_global_init()
     hb_register(&hb_decavcodecv);
     hb_register(&hb_decavcodeca);
     hb_register(&hb_declpcm);
-    hb_register(&hb_deccc608);
-    hb_register(&hb_decpgssub);
+    hb_register(&hb_decavsub);
     hb_register(&hb_decsrtsub);
     hb_register(&hb_decssasub);
     hb_register(&hb_dectx3gsub);
-    hb_register(&hb_decutf8sub);
-    hb_register(&hb_decvobsub);
-    hb_register(&hb_encvobsub);
     hb_register(&hb_encavcodec);
     hb_register(&hb_encavcodeca);
 #ifdef __APPLE__
@@ -1911,15 +1865,18 @@ int hb_global_init()
     hb_register(&hb_enctheora);
     hb_register(&hb_encvorbis);
     hb_register(&hb_encx264);
-#ifdef USE_X265
+#if HB_PROJECT_FEATURE_X265
     hb_register(&hb_encx265);
 #endif
-#ifdef USE_QSV
-    hb_register(&hb_encqsv);
+#if HB_PROJECT_FEATURE_QSV
+    if (!disable_hardware)
+    {
+        hb_register(&hb_encqsv);
+    }
 #endif
 
     hb_x264_global_init();
-    hb_common_global_init();
+    hb_common_global_init(disable_hardware);
 
     /*
      * Initialise buffer pool
@@ -1937,36 +1894,33 @@ int hb_global_init()
  */
 void hb_global_close()
 {
-    char dirname[1024];
-    DIR * dir;
+    char          * dirname;
+    DIR           * dir;
     struct dirent * entry;
 
     hb_presets_free();
 
-    /* OpenCL library (dynamically loaded) */
-    hb_ocl_close();
-
     /* Find and remove temp folder */
-    memset( dirname, 0, 1024 );
-    hb_get_temporary_directory( dirname );
+    dirname = hb_get_temporary_directory();
 
     dir = opendir( dirname );
     if (dir)
     {
         while( ( entry = readdir( dir ) ) )
         {
-            char filename[1024];
+            char * filename;
             if( entry->d_name[0] == '.' )
             {
                 continue;
             }
-            memset( filename, 0, 1024 );
-            snprintf( filename, 1023, "%s/%s", dirname, entry->d_name );
+            filename = hb_strdup_printf("%s/%s", dirname, entry->d_name);
             unlink( filename );
+            free(filename);
         }
         closedir( dir );
         rmdir( dirname );
     }
+    free(dirname);
 }
 
 /**
@@ -1978,15 +1932,15 @@ void hb_global_close()
 static void thread_func( void * _h )
 {
     hb_handle_t * h = (hb_handle_t *) _h;
-    char dirname[1024];
+    char * dirname;
 
     h->pid = getpid();
 
     /* Create folder for temporary files */
-    memset( dirname, 0, 1024 );
-    hb_get_temporary_directory( dirname );
+    dirname = hb_get_temporary_directory();
 
     hb_mkdir( dirname );
+    free(dirname);
 
     while( !h->die )
     {
@@ -2025,15 +1979,19 @@ static void thread_func( void * _h )
         {
             hb_thread_close( &h->work_thread );
 
-            hb_log( "libhb: work result = %d",
-                    h->work_error );
+            hb_log( "libhb: work result = %d", h->work_error );
             hb_lock( h->state_lock );
-            h->state.state                = HB_STATE_WORKDONE;
-            h->state.param.workdone.error = h->work_error;
+            h->state.state               = HB_STATE_WORKDONE;
+            h->state.param.working.error = h->work_error;
 
             hb_unlock( h->state_lock );
         }
 
+        if (h->paused)
+        {
+            h->state.param.working.paused = h->pause_duration +
+                                            hb_get_date() - h->pause_date;
+        }
         hb_snooze( 50 );
     }
 
@@ -2109,9 +2067,7 @@ void hb_set_state( hb_handle_t * h, hb_state_t * s )
     {
         // Set which job is being worked on
         if (h->current_job)
-            h->state.param.working.sequence_id = h->current_job->sequence_id;
-        else
-            h->state.param.working.sequence_id = 0;
+            h->state.sequence_id = h->current_job->sequence_id;
     }
     hb_unlock( h->state_lock );
     hb_unlock( h->pause_lock );
@@ -2136,4 +2092,8 @@ void hb_system_sleep_prevent(hb_handle_t *h)
 hb_interjob_t * hb_interjob_get( hb_handle_t * h )
 {
     return h->interjob;
+}
+
+int is_hardware_disabled(void){
+    return disable_hardware;
 }

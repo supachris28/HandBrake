@@ -1,16 +1,19 @@
 /* encx265.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
-#ifdef USE_X265
 
-#include "hb.h"
-#include "hb_dict.h"
-#include "h265_common.h"
+#include "handbrake/project.h"
+
+#if HB_PROJECT_FEATURE_X265
+
+#include "handbrake/handbrake.h"
+#include "handbrake/hb_dict.h"
+#include "handbrake/h265_common.h"
 #include "x265.h"
 
 int  encx265Init (hb_work_object_t*, hb_job_t*);
@@ -53,10 +56,11 @@ struct hb_work_private_s
         int64_t          duration;
     } frame_info[FRAME_INFO_SIZE];
 
-    char                 csvfn[1024];
+    char               * csvfn;
 
     // Multiple bit-depth
     const x265_api     * api;
+    int                  bit_depth;
 };
 
 static int param_parse(hb_work_private_t *pv, x265_param *param,
@@ -78,6 +82,31 @@ static int param_parse(hb_work_private_t *pv, x265_param *param,
     return ret;
 }
 
+int apply_h265_level(hb_work_private_t *pv,  x265_param *param,
+                     const char *h265_level)
+{
+    if (h265_level == NULL ||
+        !strcasecmp(h265_level, hb_h265_level_names[0]))
+    {
+        return 0;
+    }
+    // Verify that level is valid
+    int i;
+    for (i = 1; hb_h265_level_values[i]; i++)
+    {
+        if (!strcmp(hb_h265_level_names[i], h265_level) ||
+            !strcmp(hb_h265_level_names2[i], h265_level))
+        {
+            return param_parse(pv, param, "level-idc",
+                    hb_h265_level_names2[i]);
+        }
+    }
+
+    // error (invalid or unsupported level), abort
+    hb_error("apply_h265_level: invalid level %s", h265_level);
+    return X265_PARAM_BAD_VALUE;
+}
+
 /***********************************************************************
  * hb_work_encx265_init
  ***********************************************************************
@@ -87,7 +116,6 @@ int encx265Init(hb_work_object_t *w, hb_job_t *job)
 {
     hb_work_private_t  *pv = calloc(1, sizeof(hb_work_private_t));
     int                 ret, depth;
-    hb_rational_t       vrate;
     x265_nal           *nal;
     uint32_t            nnal;
     const char * const *profile_names;
@@ -143,9 +171,8 @@ int encx265Init(hb_work_object_t *w, hb_job_t *job)
      * Some HandBrake-specific defaults; users can override them
      * using the encoder_options string.
      */
-    hb_reduce(&vrate.num, &vrate.den, job->vrate.num, job->vrate.den);
-    param->fpsNum      = vrate.num;
-    param->fpsDenom    = vrate.den;
+    param->fpsNum      = job->orig_vrate.num;
+    param->fpsDenom    = job->orig_vrate.den;
     param->keyframeMin = (double)job->orig_vrate.num / job->orig_vrate.den +
                                  0.5;
     param->keyframeMax = param->keyframeMin * 10;
@@ -157,45 +184,19 @@ int encx265Init(hb_work_object_t *w, hb_job_t *job)
      * flags, if any, should be set in the x265_param struct).
      */
     char colorprim[11], transfer[11], colormatrix[11];
-    switch (job->color_matrix_code)
-    {
-        case 1: // ITU BT.601 DVD or SD TV content (NTSC)
-            strcpy(colorprim,   "smpte170m");
-            strcpy(transfer,        "bt709");
-            strcpy(colormatrix, "smpte170m");
-            break;
-        case 2: // ITU BT.601 DVD or SD TV content (PAL)
-            strcpy(colorprim,     "bt470bg");
-            strcpy(transfer,        "bt709");
-            strcpy(colormatrix, "smpte170m");
-            break;
-        case 3: // ITU BT.709 HD content
-            strcpy(colorprim,   "bt709");
-            strcpy(transfer,    "bt709");
-            strcpy(colormatrix, "bt709");
-            break;
-        case 4: // ITU BT.2020 UHD content
-            strcpy(colorprim,   "bt2020");
-            strcpy(transfer,    "bt709");
-            strcpy(colormatrix, "bt2020nc");
-            break;
-        case 5: // custom
-            snprintf(colorprim,   sizeof(colorprim),   "%d", job->color_prim);
-            snprintf(transfer,    sizeof(transfer),    "%d", job->color_transfer);
-            snprintf(colormatrix, sizeof(colormatrix), "%d", job->color_matrix);
-            break;
-        default: // detected during scan
-            snprintf(colorprim,   sizeof(colorprim),   "%d", job->title->color_prim);
-            snprintf(transfer,    sizeof(transfer),    "%d", job->title->color_transfer);
-            snprintf(colormatrix, sizeof(colormatrix), "%d", job->title->color_matrix);
-            break;
-    }
+    snprintf(colorprim,   sizeof(colorprim),   "%d", hb_output_color_prim(job));
+    snprintf(transfer,    sizeof(transfer),    "%d", hb_output_color_transfer(job));
+    snprintf(colormatrix, sizeof(colormatrix), "%d", hb_output_color_matrix(job));
+
     if (param_parse(pv, param, "colorprim",   colorprim)   ||
         param_parse(pv, param, "transfer",    transfer)    ||
         param_parse(pv, param, "colormatrix", colormatrix))
     {
         goto fail;
     }
+
+    /* Bit depth */
+    pv->bit_depth = hb_get_bit_depth(job->pix_fmt);
 
     /* iterate through x265_opts and parse the options */
     hb_dict_t *x265_opts;
@@ -221,16 +222,15 @@ int encx265Init(hb_work_object_t *w, hb_job_t *job)
      * Reload colorimetry settings in case custom
      * values were set in the encoder_options string.
      */
-    job->color_matrix_code = 4;
-    job->color_prim        = param->vui.colorPrimaries;
-    job->color_transfer    = param->vui.transferCharacteristics;
-    job->color_matrix      = param->vui.matrixCoeffs;
+    job->color_prim_override     = param->vui.colorPrimaries;
+    job->color_transfer_override = param->vui.transferCharacteristics;
+    job->color_matrix_override   = param->vui.matrixCoeffs;
 
     /*
-     * Settings which can't be overriden in the encodeer_options string
+     * Settings which can't be overridden in the encodeer_options string
      * (muxer-specific settings, resolution, ratecontrol, etc.).
      */
-    param->bRepeatHeaders = 0;
+    param->bRepeatHeaders = job->inline_parameter_sets;
     param->sourceWidth    = job->width;
     param->sourceHeight   = job->height;
 
@@ -257,15 +257,17 @@ int encx265Init(hb_work_object_t *w, hb_job_t *job)
         if (job->pass_id == HB_PASS_ENCODE_1ST ||
             job->pass_id == HB_PASS_ENCODE_2ND)
         {
-            char stats_file[1024] = "";
-            char pass[2];
+            char * stats_file;
+            char   pass[2];
             snprintf(pass, sizeof(pass), "%d", job->pass_id);
-            hb_get_tempory_filename(job->h, stats_file, "x265.log");
+            stats_file = hb_get_temporary_filename("x265.log");
             if (param_parse(pv, param, "stats", stats_file) ||
                 param_parse(pv, param, "pass", pass))
             {
+                free(stats_file);
                 goto fail;
             }
+            free(stats_file);
             if (job->pass_id == HB_PASS_ENCODE_1ST)
             {
                 char slowfirstpass[2];
@@ -280,17 +282,16 @@ int encx265Init(hb_work_object_t *w, hb_job_t *job)
     }
 
     /* statsfile (but not 2-pass) */
-    memset(pv->csvfn, 0, sizeof(pv->csvfn));
     if (param->logLevel >= X265_LOG_DEBUG)
     {
         if (param->csvfn == NULL)
         {
-            hb_get_tempory_filename(job->h, pv->csvfn, "x265.csv");
-            param->csvfn = pv->csvfn;
+            pv->csvfn = hb_get_temporary_filename("x265.csv");
+            param->csvfn = strdup(pv->csvfn);
         }
         else
         {
-            strncpy(pv->csvfn, param->csvfn, sizeof(pv->csvfn));
+            pv->csvfn = strdup(param->csvfn);
         }
     }
 
@@ -298,6 +299,10 @@ int encx265Init(hb_work_object_t *w, hb_job_t *job)
     if (job->encoder_profile                                      != NULL &&
         strcasecmp(job->encoder_profile, profile_names[0])        != 0    &&
         pv->api->param_apply_profile(param, job->encoder_profile) < 0)
+    {
+        goto fail;
+    }
+    if (apply_h265_level(pv, param, job->encoder_level) < 0)
     {
         goto fail;
     }
@@ -356,6 +361,7 @@ void encx265Close(hb_work_object_t *w)
 
     pv->api->param_free(pv->param);
     pv->api->encoder_close(pv->x265);
+    free(pv->csvfn);
     free(pv);
     w->private_data = NULL;
 }
@@ -414,9 +420,9 @@ static hb_buffer_t* nal_encode(hb_work_object_t *w,
     buf->s.stop         = pic_out->pts + buf->s.duration;
     buf->s.start        = pic_out->pts;
     buf->s.renderOffset = pic_out->dts;
-    if (w->config->h264.init_delay == 0 && pic_out->dts < 0)
+    if (w->config->init_delay == 0 && pic_out->dts < 0)
     {
-        w->config->h264.init_delay -= pic_out->dts;
+        w->config->init_delay -= pic_out->dts;
     }
 
     switch (pic_out->sliceType)
@@ -427,16 +433,19 @@ static hb_buffer_t* nal_encode(hb_work_object_t *w,
             buf->s.frametype = HB_FRAME_IDR;
             break;
         case X265_TYPE_P:
+            buf->s.flags |= HB_FLAG_FRAMETYPE_REF;
             buf->s.frametype = HB_FRAME_P;
             break;
         case X265_TYPE_B:
             buf->s.frametype = HB_FRAME_B;
             break;
         case X265_TYPE_BREF:
+            buf->s.flags |= HB_FLAG_FRAMETYPE_REF;
             buf->s.frametype = HB_FRAME_BREF;
             break;
         case X265_TYPE_I:
         default:
+            buf->s.flags |= HB_FLAG_FRAMETYPE_REF;
             buf->s.frametype = HB_FRAME_I;
             break;
     }
@@ -472,7 +481,7 @@ static hb_buffer_t* x265_encode(hb_work_object_t *w, hb_buffer_t *in)
     pic_in.planes[2] = in->plane[2].data;
     pic_in.poc       = pv->frames_in++;
     pic_in.pts       = in->s.start;
-    pic_in.bitDepth  = 8;
+    pic_in.bitDepth  = pv->bit_depth;
 
     if (in->s.new_chap && job->chapter_markers)
     {

@@ -12,8 +12,9 @@ namespace HandBrakeWPF.Services.Scan.Model
     using System;
     using System.Xml.Serialization;
 
-    using HandBrake.ApplicationServices.Utilities;
+    using HandBrake.Interop.Utilities;
 
+    using HandBrakeWPF.Properties;
     using HandBrakeWPF.Services.Encode.Model.Models;
     using HandBrakeWPF.Utilities;
 
@@ -29,31 +30,15 @@ namespace HandBrakeWPF.Services.Scan.Model
         {
         }
 
+        public Subtitle(int sourceId)
+        {
+            this.SourceId = sourceId;
+        }
+
         /// <summary>
         /// Initializes a new instance of the <see cref="Subtitle"/> class.
         /// </summary>
-        /// <param name="sourceId">
-        /// The source Id.
-        /// </param>
-        /// <param name="trackNumber">
-        /// The track number.
-        /// </param>
-        /// <param name="language">
-        /// The language.
-        /// </param>
-        /// <param name="languageCode">
-        /// The language code.
-        /// </param>
-        /// <param name="subtitleType">
-        /// The subtitle type.
-        /// </param>
-        /// <param name="canBurn">
-        /// The can Burn.
-        /// </param>
-        /// <param name="canForce">
-        /// The can Force.
-        /// </param>
-        public Subtitle(int sourceId, int trackNumber, string language, string languageCode, SubtitleType subtitleType, bool canBurn, bool canForce)
+        public Subtitle(int sourceId, int trackNumber, string language, string languageCode, SubtitleType subtitleType, bool canBurn, bool canForce, string name)
         {
             this.SourceId = sourceId;
             this.TrackNumber = trackNumber;
@@ -62,6 +47,7 @@ namespace HandBrakeWPF.Services.Scan.Model
             this.SubtitleType = subtitleType;
             this.CanBurnIn = canBurn;
             this.CanForce = canForce;
+            this.Name = name;
         }
 
         /// <summary>
@@ -80,7 +66,7 @@ namespace HandBrakeWPF.Services.Scan.Model
         public string Language { get; set; }
 
         /// <summary>
-        /// Gets or sets the Langauage Code
+        /// Gets or sets the Language Code
         /// </summary>
         public string LanguageCode { get; set; }
 
@@ -96,6 +82,7 @@ namespace HandBrakeWPF.Services.Scan.Model
                 {
                     return this.LanguageCode.Replace("iso639-2: ", string.Empty).Trim();
                 }
+
                 return string.Empty;
             }
         }
@@ -117,6 +104,8 @@ namespace HandBrakeWPF.Services.Scan.Model
         /// </summary>
         public SubtitleType SubtitleType { get; set; }
 
+        public string Name { get; set; }
+
         /// <summary>
         /// Gets Subtitle Type
         /// </summary>
@@ -134,7 +123,7 @@ namespace HandBrakeWPF.Services.Scan.Model
         /// <returns>A string formatted as: {track #} {language}</returns>
         public override string ToString()
         {
-            return this.SubtitleType == SubtitleType.ForeignAudioSearch ? "Foreign Audio Scan" : string.Format("{0} {1} ({2})", this.TrackNumber, this.Language, this.TypeString);
+            return this.SubtitleType == SubtitleType.ForeignAudioSearch ? Resources.Subtitle_ForeignAudioScan : string.Format("{0} {1}", this.TrackNumber, this.Language);
         }
 
         /// <summary>

@@ -13,7 +13,7 @@ namespace HandBrakeWPF.Converters.Video
     using System.Globalization;
     using System.Windows.Data;
 
-    using HandBrake.ApplicationServices.Interop.Model.Encoding;
+    using HandBrake.Interop.Interop.Model.Encoding;
 
     using HandBrakeWPF.Utilities;
 
@@ -49,7 +49,13 @@ namespace HandBrakeWPF.Converters.Video
             {
                 string rfqp = task.VideoEncoder == VideoEncoder.X264 || task.VideoEncoder == VideoEncoder.X264_10 || task.VideoEncoder == VideoEncoder.X265 
                     || task.VideoEncoder == VideoEncoder.X265_10 || task.VideoEncoder == VideoEncoder.X265_12 ? "RF" : "QP";
-                string quality = task.VideoEncodeRateType == VideoEncodeRateType.ConstantQuality ? task.Quality + rfqp : task.VideoBitrate + " kbps";
+
+                if (task.VideoEncoder == VideoEncoder.NvencH264 || task.VideoEncoder == VideoEncoder.NvencH265)
+                {
+                    rfqp = "CQ";
+                }
+
+                string quality = task.VideoEncodeRateType == VideoEncodeRateType.ConstantQuality ? string.Format("{0} {1}", task.Quality, rfqp) : string.Format("{0} {1}", task.VideoBitrate, " kbps");
                 string twoPass = null;
 
                 if (task.VideoEncodeRateType == VideoEncodeRateType.AverageBitrate)

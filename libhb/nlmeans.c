@@ -1,7 +1,7 @@
 /* nlmeans.c
 
    Copyright (c) 2013 Dirk Farin
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
@@ -50,10 +50,10 @@
  *        etc...
  */
 
-#include "hb.h"
-#include "hbffmpeg.h"
-#include "taskset.h"
-#include "nlmeans.h"
+#include "handbrake/handbrake.h"
+#include "handbrake/hbffmpeg.h"
+#include "handbrake/taskset.h"
+#include "handbrake/nlmeans.h"
 
 #define NLMEANS_STRENGTH_LUMA_DEFAULT      6
 #define NLMEANS_STRENGTH_CHROMA_DEFAULT    6
@@ -72,8 +72,8 @@
 #define NLMEANS_PREFILTER_MODE_MEAN5X5       2
 #define NLMEANS_PREFILTER_MODE_MEDIAN3X3     4
 #define NLMEANS_PREFILTER_MODE_MEDIAN5X5     8
-#define NLMEANS_PREFILTER_MODE_RESERVED16   16 // Reserved
-#define NLMEANS_PREFILTER_MODE_RESERVED32   32 // Reserved
+#define NLMEANS_PREFILTER_MODE_CSM3X3       16
+#define NLMEANS_PREFILTER_MODE_CSM5X5       32
 #define NLMEANS_PREFILTER_MODE_RESERVED64   64 // Reserved
 #define NLMEANS_PREFILTER_MODE_RESERVED128 128 // Reserved
 #define NLMEANS_PREFILTER_MODE_REDUCE25    256
@@ -130,6 +130,7 @@ struct hb_filter_private_s
     int    range[3];       // spatial search window width (must be odd)
     int    nframes[3];     // temporal search depth in frames
     int    prefilter[3];   // prefilter mode, can improve weight analysis
+    int    threads;        // number of frame threads to use, 0 == auto
 
     float  exptable[3][NLMEANS_EXPSIZE];
     float  weight_fact_table[3];
@@ -142,8 +143,10 @@ struct hb_filter_private_s
     int         max_frames;
 
     taskset_t   taskset;
-    int         thread_count;
-    nlmeans_thread_arg_t **thread_data;
+    nlmeans_thread_arg_t ** thread_data;
+
+    hb_filter_init_t        input;
+    hb_filter_init_t        output;
 };
 
 static int nlmeans_init(hb_filter_object_t *filter, hb_filter_init_t *init);
@@ -163,7 +166,8 @@ static const char nlmeans_template[] =
     "cb-frame-count=^"HB_INT_REG"$:cb-prefilter=^"HB_INT_REG"$:"
     "cr-strength=^"HB_FLOAT_REG"$:cr-origin-tune=^"HB_FLOAT_REG"$:"
     "cr-patch-size=^"HB_INT_REG"$:cr-range=^"HB_INT_REG"$:"
-    "cr-frame-count=^"HB_INT_REG"$:cr-prefilter=^"HB_INT_REG"$";
+    "cr-frame-count=^"HB_INT_REG"$:cr-prefilter=^"HB_INT_REG"$:"
+    "threads=^"HB_INT_REG"$";
 
 hb_filter_object_t hb_filter_nlmeans =
 {
@@ -251,8 +255,9 @@ static void nlmeans_alloc(const uint8_t *src,
     dst->border    = border;
 
     nlmeans_border(dst->mem, dst->w, dst->h, dst->border);
-    dst->mem_pre   = dst->mem;
-    dst->image_pre = dst->image;
+    dst->mem_pre     = dst->mem;
+    dst->image_pre   = dst->image;
+    dst->prefiltered = 0;
 
 }
 
@@ -385,6 +390,99 @@ static void nlmeans_filter_median(const uint8_t *src,
 
 }
 
+static void nlmeans_filter_csm(const uint8_t *src,
+                                     uint8_t *dst,
+                               const int w,
+                               const int h,
+                               const int border,
+                               const int size)
+{
+    // CSM filter
+    const int bw = w + 2 * border;
+    const int offset_min = -((size - 1) /2);
+    const int offset_max =   (size + 1) /2;
+    uint8_t min,  max,
+            min2, max2,
+            min3, max3,
+            median,
+            pixel;
+    for (int y = 0; y < h; y++)
+    {
+        for (int x = 0; x < w; x++)
+        {
+            for (int k = offset_min; k < offset_max; k++)
+            {
+                for (int j = offset_min; j < offset_max; j++)
+                {
+                    if (k == 0 && j == 0)
+                    {
+                        // Ignore origin
+                        goto end;
+                    }
+                    pixel = *(src + bw*(y+j) + (x+k));
+                    if (k == offset_min && j == offset_min)
+                    {
+                        // Start calculating neighborhood thresholds
+                        min = pixel;
+                        max = min;
+                        goto end;
+                    }
+                    if (pixel < min)
+                    {
+                        min = pixel;
+                    }
+                    if (pixel > max)
+                    {
+                        max = pixel;
+                    }
+                }
+                end:
+                    continue;
+            }
+
+            // Final neighborhood thresholds
+            // min = minimum neighbor pixel value
+            // max = maximum neighbor pixel value
+
+            // Median
+            median = (min + max) / 2;
+
+            // Additional thresholds for median-like filtering
+            min2 = (min + median) / 2;
+            max2 = (max + median) / 2;
+            min3 = (min2 + median) / 2;
+            max3 = (max2 + median) / 2;
+
+            // Clamp to thresholds
+            pixel = *(src + bw*(y) + (x));
+            if (pixel < min)
+            {
+                *(dst + bw*y + x) = min;
+            }
+            else if (pixel > max)
+            {
+                *(dst + bw*y + x) = max;
+            }
+            else if (pixel < min2)
+            {
+                *(dst + bw*y + x) = min2;
+            }
+            else if (pixel > max2)
+            {
+                *(dst + bw*y + x) = max2;
+            }
+            else if (pixel < min3)
+            {
+                *(dst + bw*y + x) = min3;
+            }
+            else if (pixel > max3)
+            {
+                *(dst + bw*y + x) = max3;
+            }
+        }
+    }
+}
+
 static void nlmeans_filter_edgeboost(const uint8_t *src,
                                            uint8_t *dst,
                                      const int w,
@@ -492,7 +590,7 @@ static void nlmeans_prefilter(BorderedPlane *src,
                               const int filter_type)
 {
     hb_lock(src->mutex);
-    if (src->prefiltered)
+    if (src->prefiltered == 1)
     {
         hb_unlock(src->mutex);
         return;
@@ -501,7 +599,9 @@ static void nlmeans_prefilter(BorderedPlane *src,
     if (filter_type & NLMEANS_PREFILTER_MODE_MEAN3X3   ||
         filter_type & NLMEANS_PREFILTER_MODE_MEAN5X5   ||
         filter_type & NLMEANS_PREFILTER_MODE_MEDIAN3X3 ||
-        filter_type & NLMEANS_PREFILTER_MODE_MEDIAN5X5)
+        filter_type & NLMEANS_PREFILTER_MODE_MEDIAN5X5 ||
+        filter_type & NLMEANS_PREFILTER_MODE_CSM3X3    ||
+        filter_type & NLMEANS_PREFILTER_MODE_CSM5X5)
     {
 
         // Source image
@@ -516,13 +616,20 @@ static void nlmeans_prefilter(BorderedPlane *src,
         // Duplicate plane
         uint8_t *mem_pre = malloc(bw * bh * sizeof(uint8_t));
         uint8_t *image_pre = mem_pre + border + bw * border;
-        for (int y = 0; y < h; y++)
-        {
-            memcpy(mem_pre + y * bw, mem + y * bw, bw);
-        }
+        memcpy(mem_pre, mem, bw * bh * sizeof(uint8_t));
 
         // Filter plane; should already have at least 2px extra border on each side
-        if (filter_type & NLMEANS_PREFILTER_MODE_MEDIAN5X5)
+        if (filter_type & NLMEANS_PREFILTER_MODE_CSM5X5)
+        {
+            // CSM 5x5
+            nlmeans_filter_csm(image, image_pre, w, h, border, 5);
+        }
+        else if (filter_type & NLMEANS_PREFILTER_MODE_CSM3X3)
+        {
+            // CSM 3x3
+            nlmeans_filter_csm(image, image_pre, w, h, border, 3);
+        }
+        else if (filter_type & NLMEANS_PREFILTER_MODE_MEDIAN5X5)
         {
             // Median 5x5
             nlmeans_filter_median(image, image_pre, w, h, border, 5);
@@ -579,12 +686,17 @@ static void nlmeans_prefilter(BorderedPlane *src,
             }
         }
 
+        // Recreate borders
+        nlmeans_border(mem_pre, w, h, border);
+
         // Assign result
         src->mem_pre   = mem_pre;
         src->image_pre = image_pre;
-
-        // Recreate borders
-        nlmeans_border(mem_pre, w, h, border);
+        if (filter_type & NLMEANS_PREFILTER_MODE_PASSTHRU)
+        {
+            src->mem   = src->mem_pre;
+            src->image = src->image_pre;
+        }
 
     }
     src->prefiltered = 1;
@@ -686,7 +798,6 @@ static void nlmeans_plane(NLMeansFunctions *functions,
                 // Apply special weight tuning to origin patch
                 if (dx == 0 && dy == 0 && f == 0)
                 {
-                    // TODO: Parallelize this
                     for (int y = n_half; y < dst_h-n + n_half; y++)
                     {
                         for (int x = n_half; x < dst_w-n + n_half; x++)
@@ -713,7 +824,6 @@ static void nlmeans_plane(NLMeansFunctions *functions,
                                           dy);
 
                 // Average displacement
-                // TODO: Parallelize this
                 for (int y = 0; y <= dst_h-n; y++)
                 {
                     const uint32_t *integral_ptr1 = integral + (y  -1)*integral_stride - 1;
@@ -785,6 +895,8 @@ static int nlmeans_init(hb_filter_object_t *filter,
     hb_filter_private_t *pv = filter->private_data;
     NLMeansFunctions *functions = &pv->functions;
 
+    pv->input = *init;
+
     functions->build_integral = build_integral_scalar;
 #if defined(ARCH_X86)
     nlmeans_init_x86(functions);
@@ -800,6 +912,7 @@ static int nlmeans_init(hb_filter_object_t *filter,
         pv->nframes[c]     = -1;
         pv->prefilter[c]   = -1;
     }
+    pv->threads = -1;
 
     // Read user parameters
     if (filter->settings != NULL)
@@ -825,6 +938,8 @@ static int nlmeans_init(hb_filter_object_t *filter,
         hb_dict_extract_int(&pv->range[2],          dict, "cr-range");
         hb_dict_extract_int(&pv->nframes[2],        dict, "cr-frame-count");
         hb_dict_extract_int(&pv->prefilter[2],      dict, "cr-prefilter");
+
+        hb_dict_extract_int(&pv->threads,           dict, "threads");
     }
 
     // Cascade values
@@ -879,9 +994,23 @@ static int nlmeans_init(hb_filter_object_t *filter,
         exptable[NLMEANS_EXPSIZE-1] = 0;
     }
 
-    pv->thread_count = hb_get_cpu_count();
-    pv->frame = calloc(pv->thread_count + pv->max_frames, sizeof(Frame));
-    for (int ii = 0; ii < pv->thread_count + pv->max_frames; ii++)
+    // Threads
+    if (pv->threads < 1) {
+        pv->threads = hb_get_cpu_count();
+
+        // Reduce internal thread count where we have many logical cores
+        // Too many threads increases CPU cache pressure, reducing performance
+        if (pv->threads >= 32) {
+            pv->threads = pv->threads / 2;
+        }
+        else if (pv->threads >= 16) {
+            pv->threads = (pv->threads / 4) * 3;
+        }
+    }
+    hb_log("NLMeans using %i threads", pv->threads);
+
+    pv->frame = calloc(pv->threads + pv->max_frames, sizeof(Frame));
+    for (int ii = 0; ii < pv->threads + pv->max_frames; ii++)
     {
         for (int c = 0; c < 3; c++)
         {
@@ -889,15 +1018,15 @@ static int nlmeans_init(hb_filter_object_t *filter,
         }
     }
 
-    pv->thread_data = malloc(pv->thread_count * sizeof(nlmeans_thread_arg_t*));
-    if (taskset_init(&pv->taskset, pv->thread_count,
+    pv->thread_data = malloc(pv->threads * sizeof(nlmeans_thread_arg_t*));
+    if (taskset_init(&pv->taskset, pv->threads,
                      sizeof(nlmeans_thread_arg_t)) == 0)
     {
         hb_error("NLMeans could not initialize taskset");
         goto fail;
     }
 
-    for (int ii = 0; ii < pv->thread_count; ii++)
+    for (int ii = 0; ii < pv->threads; ii++)
     {
         pv->thread_data[ii] = taskset_thread_args(&pv->taskset, ii);
         if (pv->thread_data[ii] == NULL)
@@ -914,6 +1043,7 @@ static int nlmeans_init(hb_filter_object_t *filter,
             goto fail;
         }
     }
+    pv->output = *init;
 
     return 0;
 
@@ -952,7 +1082,7 @@ static void nlmeans_close(hb_filter_object_t *filter)
         }
     }
 
-    for (int ii = 0; ii < pv->thread_count + pv->max_frames; ii++)
+    for (int ii = 0; ii < pv->threads + pv->max_frames; ii++)
     {
         for (int c = 0; c < 3; c++)
         {
@@ -972,7 +1102,7 @@ static void nlmeans_filter_thread(void *thread_args_v)
     hb_filter_private_t *pv = thread_data->pv;
     int segment = thread_data->segment;
 
-    hb_log("NLMeans thread started for segment %d", segment);
+    hb_deep_log(3, "NLMeans thread started for segment %d", segment);
 
     while (1)
     {
@@ -986,22 +1116,28 @@ static void nlmeans_filter_thread(void *thread_args_v)
 
         Frame *frame = &pv->frame[segment];
         hb_buffer_t *buf;
-        buf = hb_frame_buffer_init(frame->fmt, frame->width, frame->height);
+        buf = hb_frame_buffer_init(pv->output.pix_fmt,
+                                   frame->width, frame->height);
+        buf->f.color_prim     = pv->output.color_prim;
+        buf->f.color_transfer = pv->output.color_transfer;
+        buf->f.color_matrix   = pv->output.color_matrix;
+        buf->f.color_range    = pv->output.color_range ;
+
 
         NLMeansFunctions *functions = &pv->functions;
 
         for (int c = 0; c < 3; c++)
         {
-            if (pv->strength[c] == 0)
+            if (pv->prefilter[c] & NLMEANS_PREFILTER_MODE_PASSTHRU)
             {
+                nlmeans_prefilter(&frame->plane[c], pv->prefilter[c]);
                 nlmeans_deborder(&frame->plane[c], buf->plane[c].data,
                                  buf->plane[c].width, buf->plane[c].stride,
                                  buf->plane[c].height);
                 continue;
             }
-            if (pv->prefilter[c] & NLMEANS_PREFILTER_MODE_PASSTHRU)
+            if (pv->strength[c] == 0)
             {
-                nlmeans_prefilter(&pv->frame->plane[c], pv->prefilter[c]);
                 nlmeans_deborder(&frame->plane[c], buf->plane[c].data,
                                  buf->plane[c].width, buf->plane[c].stride,
                                  buf->plane[c].height);
@@ -1057,7 +1193,7 @@ static void nlmeans_add_frame(hb_filter_private_t *pv, hb_buffer_t *buf)
 
 static hb_buffer_t * nlmeans_filter(hb_filter_private_t *pv)
 {
-    if (pv->next_frame < pv->max_frames + pv->thread_count)
+    if (pv->next_frame < pv->max_frames + pv->threads)
     {
         return NULL;
     }
@@ -1067,7 +1203,7 @@ static hb_buffer_t * nlmeans_filter(hb_filter_private_t *pv)
     // Free buffers that are not needed for next taskset cycle
     for (int c = 0; c < 3; c++)
     {
-        for (int t = 0; t < pv->thread_count; t++)
+        for (int t = 0; t < pv->threads; t++)
         {
             // Release last frame in buffer
             if (pv->frame[t].plane[c].mem_pre != NULL &&
@@ -1088,20 +1224,20 @@ static hb_buffer_t * nlmeans_filter(hb_filter_private_t *pv)
     {
         // Don't move the mutex!
         Frame frame = pv->frame[f];
-        pv->frame[f] = pv->frame[f+pv->thread_count];
+        pv->frame[f] = pv->frame[f+pv->threads];
         for (int c = 0; c < 3; c++)
         {
             pv->frame[f].plane[c].mutex = frame.plane[c].mutex;
-            pv->frame[f+pv->thread_count].plane[c].mem_pre = NULL;
-            pv->frame[f+pv->thread_count].plane[c].mem = NULL;
+            pv->frame[f+pv->threads].plane[c].mem_pre = NULL;
+            pv->frame[f+pv->threads].plane[c].mem = NULL;
         }
     }
-    pv->next_frame -= pv->thread_count;
+    pv->next_frame -= pv->threads;
 
     // Collect results from taskset
     hb_buffer_list_t list;
     hb_buffer_list_clear(&list);
-    for (int t = 0; t < pv->thread_count; t++)
+    for (int t = 0; t < pv->threads; t++)
     {
         hb_buffer_list_append(&list, pv->thread_data[t]->out);
     }
@@ -1117,22 +1253,27 @@ static hb_buffer_t * nlmeans_filter_flush(hb_filter_private_t *pv)
     {
         Frame *frame = &pv->frame[f];
         hb_buffer_t *buf;
-        buf = hb_frame_buffer_init(frame->fmt, frame->width, frame->height);
+        buf = hb_frame_buffer_init(pv->output.pix_fmt,
+                                   frame->width, frame->height);
+        buf->f.color_prim     = pv->output.color_prim;
+        buf->f.color_transfer = pv->output.color_transfer;
+        buf->f.color_matrix   = pv->output.color_matrix;
+        buf->f.color_range    = pv->output.color_range ;
 
         NLMeansFunctions *functions = &pv->functions;
 
         for (int c = 0; c < 3; c++)
         {
-            if (pv->strength[c] == 0)
+            if (pv->prefilter[c] & NLMEANS_PREFILTER_MODE_PASSTHRU)
             {
+                nlmeans_prefilter(&frame->plane[c], pv->prefilter[c]);
                 nlmeans_deborder(&frame->plane[c], buf->plane[c].data,
                                  buf->plane[c].width, buf->plane[c].stride,
                                  buf->plane[c].height);
                 continue;
             }
-            if (pv->prefilter[c] & NLMEANS_PREFILTER_MODE_PASSTHRU)
+            if (pv->strength[c] == 0)
             {
-                nlmeans_prefilter(&pv->frame[f].plane[c], pv->prefilter[c]);
                 nlmeans_deborder(&frame->plane[c], buf->plane[c].data,
                                  buf->plane[c].width, buf->plane[c].stride,
                                  buf->plane[c].height);

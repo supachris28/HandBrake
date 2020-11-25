@@ -8,14 +8,17 @@
 
 @implementation NSJSONSerialization (HBAdditions)
 
-+ (id)HB_JSONObjectWithUTF8String:(const char *)nullTerminatedCString options:(NSJSONReadingOptions)opt error:(NSError **)error;
++ (id)HB_JSONObjectWithUTF8String:(const char *)nullTerminatedCString options:(NSJSONReadingOptions)opt error:(NSError * __autoreleasing *)error
 {
+    if (!nullTerminatedCString) {
+        return nil;
+    }
     NSData *data = [NSData dataWithBytes:nullTerminatedCString length:strlen(nullTerminatedCString)];
     id result = [NSJSONSerialization JSONObjectWithData:data options:opt error:error];
     return result;
 }
 
-+ (NSString *)HB_StringWithJSONObject:(id)obj options:(NSJSONWritingOptions)opt error:(NSError **)error
++ (NSString *)HB_StringWithJSONObject:(id)obj options:(NSJSONWritingOptions)opt error:(NSError * __autoreleasing *)error
 {
     NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:opt error:error];
     if (data)

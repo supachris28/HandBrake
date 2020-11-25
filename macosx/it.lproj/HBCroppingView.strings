@@ -1,0 +1,42 @@
+/* Class = "NSTextField"; ibExternalAccessibilityDescription = "Crop bottom"; ObjectID = "6Gj-ZU-E1E"; */
+"6Gj-ZU-E1E.ibExternalAccessibilityDescription" = "Ritaglio dal fondo";
+
+/* Class = "NSTextField"; ibShadowedToolTip = "Bottom edge cropping amount in pixels."; ObjectID = "6Gj-ZU-E1E"; */
+"6Gj-ZU-E1E.ibShadowedToolTip" = "Quantità di ritaglio del bordo inferiore in pixel.";
+
+/* Class = "NSStepper"; ibExternalAccessibilityDescription = "Crop top"; ObjectID = "8e5-zI-IBg"; */
+"8e5-zI-IBg.ibExternalAccessibilityDescription" = "Ritaglio dall'alto";
+
+/* Class = "NSButtonCell"; title = "Custom:"; ObjectID = "auT-Ic-0JB"; */
+"auT-Ic-0JB.title" = "Personalizzato:";
+
+/* Class = "NSTextField"; ibExternalAccessibilityDescription = "Crop top"; ObjectID = "Cp5-xz-x1h"; */
+"Cp5-xz-x1h.ibExternalAccessibilityDescription" = "Ritaglio dall'alto";
+
+/* Class = "NSTextField"; ibShadowedToolTip = "Top edge cropping amount in pixels."; ObjectID = "Cp5-xz-x1h"; */
+"Cp5-xz-x1h.ibShadowedToolTip" = "Quantità di ritaglio del bordo superiore in pixel.";
+
+/* Class = "NSTextField"; ibExternalAccessibilityDescription = "Crop right"; ObjectID = "php-p6-Nz6"; */
+"php-p6-Nz6.ibExternalAccessibilityDescription" = "Ritaglio a destra";
+
+/* Class = "NSTextField"; ibShadowedToolTip = "Right edge cropping amount in pixels."; ObjectID = "php-p6-Nz6"; */
+"php-p6-Nz6.ibShadowedToolTip" = "Quantità di ritaglio del bordo destro in pixel.";
+
+/* Class = "NSStepper"; ibExternalAccessibilityDescription = "Crop bottom"; ObjectID = "sWf-fq-lvl"; */
+"sWf-fq-lvl.ibExternalAccessibilityDescription" = "Ritaglio dal fondo";
+
+/* Class = "NSTextField"; ibExternalAccessibilityDescription = "Crop left"; ObjectID = "Td7-sa-0TV"; */
+"Td7-sa-0TV.ibExternalAccessibilityDescription" = "Ritaglia a sinistra";
+
+/* Class = "NSTextField"; ibShadowedToolTip = "Left edge cropping amount in pixels."; ObjectID = "Td7-sa-0TV"; */
+"Td7-sa-0TV.ibShadowedToolTip" = "Quantità di ritaglio del bordo sinistro in pixel.";
+
+/* Class = "NSButtonCell"; title = "Automatic"; ObjectID = "TpA-LI-v0t"; */
+"TpA-LI-v0t.title" = "Automatico";
+
+/* Class = "NSStepper"; ibExternalAccessibilityDescription = "Crop right"; ObjectID = "y7P-yk-q46"; */
+"y7P-yk-q46.ibExternalAccessibilityDescription" = "Ritaglio a destra";
+
+/* Class = "NSStepper"; ibExternalAccessibilityDescription = "Crop left"; ObjectID = "Yua-R6-mWU"; */
+"Yua-R6-mWU.ibExternalAccessibilityDescription" = "Ritaglia a sinistra";
+

@@ -3,46 +3,43 @@
 //   This file is part of the HandBrake source code - It may be used under the terms of the GNU General Public License.
 // </copyright>
 // <summary>
-//   The User Setting Serivce
+//   The User Setting Service
 // </summary>
 // --------------------------------------------------------------------------------------------------------------------
 
 namespace HandBrakeWPF.Services
 {
     using System;
+    using System.Collections.Generic;
+    using System.Collections.Specialized;
     using System.IO;
     using System.Linq;
-    using System.Reflection;
-    using System.Xml.Serialization;
 
-    using HandBrake.ApplicationServices.Utilities;
+    using HandBrake.Interop.Model;
+    using HandBrake.Interop.Utilities;
 
+    using HandBrakeWPF.Extensions;
     using HandBrakeWPF.Properties;
     using HandBrakeWPF.Services.Interfaces;
     using HandBrakeWPF.Utilities;
 
-    using GeneralApplicationException = HandBrakeWPF.Exceptions.GeneralApplicationException;
-    using SettingChangedEventArgs = HandBrakeWPF.EventArgs.SettingChangedEventArgs;
+    using Newtonsoft.Json;
+    using Newtonsoft.Json.Linq;
+
+    using GeneralApplicationException = Exceptions.GeneralApplicationException;
+    using SettingChangedEventArgs = EventArgs.SettingChangedEventArgs;
+    using SystemInfo = HandBrakeWPF.Utilities.SystemInfo;
 
     /// <summary>
-    /// The User Setting Serivce
+    /// The User Setting Service
     /// </summary>
     public class UserSettingService : IUserSettingService
     {
-        /// <summary>
-        /// The Settings File
-        /// </summary>
-        private readonly string settingsFile = Path.Combine(DirectoryUtilities.GetUserStoragePath(VersionHelper.IsNightly()), "settings.xml");
-
-        /// <summary>
-        /// The XML Serializer 
-        /// </summary>
-        readonly XmlSerializer serializer = new XmlSerializer(typeof(Collections.SerializableDictionary<string, object>));
-
-        /// <summary>
-        /// The User Settings
-        /// </summary>
-        private Collections.SerializableDictionary<string, object> userSettings;
+        private readonly string settingsFile = Path.Combine(DirectoryUtilities.GetUserStoragePath(VersionHelper.IsNightly()), "settings.json");
+        private readonly string releaseSettingsFile = Path.Combine(DirectoryUtilities.GetUserStoragePath(false), "settings.json");
+        private readonly string nightlySettingsFile = Path.Combine(DirectoryUtilities.GetUserStoragePath(true), "settings.json");
+        private readonly JsonSerializerSettings settings = new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore };
+        private Dictionary<string, object> userSettings;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="UserSettingService"/> class.
@@ -90,10 +87,44 @@ namespace HandBrakeWPF.Services
         {
             if (this.userSettings.ContainsKey(name))
             {
-                return (T)this.userSettings[name];
+                if (typeof(T) == typeof(int))
+                {
+                    object storedValue = this.userSettings[name];
+                    object converted = storedValue?.ToString().ToInt();
+                    return (T)converted;
+                }
+
+                // Treat String Arrays as StringCollections.  TODO refactor upstream code to more traditional string arrays.
+                object settingValue = this.userSettings[name];
+                if (settingValue != null && settingValue.GetType() == typeof(JArray))
+                {
+                    string[] stringArr = ((JArray)settingValue).ToObject<string[]>();
+                    StringCollection stringCollection = new StringCollection();
+                    foreach (var item in stringArr)
+                    {
+                        stringCollection.Add(item);
+                    }
+
+                    settingValue = stringCollection;
+                }
+
+                return (T)settingValue;
             }
 
             return default(T);
+        }
+
+        public void ResetSettingsToDefaults()
+        {
+            this.userSettings.Clear();
+
+            // Set Defaults
+            Dictionary<string, object> defaults = this.GetDefaults();
+            foreach (var item in defaults.Where(item => !this.userSettings.Keys.Contains(item.Key)))
+            {
+                this.userSettings.Add(item.Key, item.Value);
+                this.Save();
+            }
         }
 
         /// <summary>
@@ -124,9 +155,10 @@ namespace HandBrakeWPF.Services
                     Directory.CreateDirectory(directory);
                 }
 
-                using (FileStream strm = new FileStream(this.settingsFile, FileMode.Create, FileAccess.Write))
+                using (StreamWriter file = new StreamWriter(new FileStream(this.settingsFile, FileMode.Create, FileAccess.Write)))
                 {
-                    this.serializer.Serialize(strm, this.userSettings);
+                    string appSettings = JsonConvert.SerializeObject(this.userSettings, Formatting.Indented, this.settings);
+                    file.Write(appSettings);
                 }
             }
             catch (Exception exc)
@@ -150,39 +182,47 @@ namespace HandBrakeWPF.Services
                 {
                     using (StreamReader reader = new StreamReader(this.settingsFile))
                     {
-                        Collections.SerializableDictionary<string, object> data = (Collections.SerializableDictionary<string, object>)this.serializer.Deserialize(reader);
-                        this.userSettings = data;
+                        string appSettings = reader.ReadToEnd();
+                        Dictionary<string, object> deserialisedSettings = JsonConvert.DeserializeObject<Dictionary<string, object>>(appSettings);
+
+                        this.userSettings = deserialisedSettings;
                     }
                 }
-                else if (VersionHelper.IsNightly() && File.Exists(Path.Combine(DirectoryUtilities.GetUserStoragePath(false), "settings.xml")))
+                else if (VersionHelper.IsNightly() && File.Exists(this.releaseSettingsFile))
                 {
                     // Port the release versions config to the nightly.
-                    string releasePresetFile = Path.Combine(DirectoryUtilities.GetUserStoragePath(false), "settings.xml");
-
                     if (!Directory.Exists(DirectoryUtilities.GetUserStoragePath(true)))
                     {
                         Directory.CreateDirectory(DirectoryUtilities.GetUserStoragePath(true));
                     }
 
-                    File.Copy(releasePresetFile, Path.Combine(DirectoryUtilities.GetUserStoragePath(true), "settings.xml"));
+                    File.Copy(this.releaseSettingsFile, this.nightlySettingsFile);
 
                     using (StreamReader reader = new StreamReader(this.settingsFile))
                     {
-                        Collections.SerializableDictionary<string, object> data = (Collections.SerializableDictionary<string, object>)this.serializer.Deserialize(reader);
-                        this.userSettings = data;
+                        string appSettings = reader.ReadToEnd();
+                        Dictionary<string, object> deserialisedSettings = JsonConvert.DeserializeObject<Dictionary<string, object>>(appSettings);
+                        this.userSettings = deserialisedSettings;
                     }
                 }
                 else
                 {
-                    this.userSettings = new Collections.SerializableDictionary<string, object>();
+                    this.userSettings = new Dictionary<string, object>();
                 }
 
                 // Add any missing / new settings
-                Collections.SerializableDictionary<string, object> defaults = this.GetDefaults();
+                Dictionary<string, object> defaults = this.GetDefaults();
                 foreach (var item in defaults.Where(item => !this.userSettings.Keys.Contains(item.Key)))
                 {
                     this.userSettings.Add(item.Key, item.Value);
                     this.Save();
+                }
+
+                // Legacy Settings forced Reset.
+                this.userSettings[UserSettingConstants.ScalingMode] = VideoScaler.Lanczos;
+                if (!SystemInfo.IsWindows10())
+                {
+                    this.userSettings[UserSettingConstants.ProcessIsolationEnabled] = false;
                 }
             }
             catch (Exception exc)
@@ -194,6 +234,7 @@ namespace HandBrakeWPF.Services
                     {
                         File.Delete(this.settingsFile);
                     }
+
                     this.Save();
 
                     throw new GeneralApplicationException(Resources.UserSettings_YourSettingsHaveBeenReset, Resources.UserSettings_YourSettingsAreCorrupt, exc);
@@ -204,30 +245,94 @@ namespace HandBrakeWPF.Services
                 }
             }
         }
-
+        
         /// <summary>
         /// Load Default Settings
         /// </summary>
         /// <returns>
         /// The get defaults.
         /// </returns>
-        private Collections.SerializableDictionary<string, object> GetDefaults()
+        private Dictionary<string, object> GetDefaults()
         {
-            try
-            {
-                Assembly assembly = Assembly.GetEntryAssembly();
-                Stream stream = assembly.GetManifestResourceStream("HandBrakeWPF.defaultsettings.xml");
-                if (stream != null)
-                {
-                    return (Collections.SerializableDictionary<string, object>)this.serializer.Deserialize(stream);
-                }
-            }
-            catch (Exception)
-            {
-                return new Collections.SerializableDictionary<string, object>();
-            }
+            Dictionary<string, object> defaults = new Dictionary<string, object>();
 
-            return new Collections.SerializableDictionary<string, object>();
+            defaults.Add(UserSettingConstants.Verbosity, 1);
+
+            // General
+            defaults.Add(UserSettingConstants.UpdateStatus, true);
+            defaults.Add(UserSettingConstants.LastUpdateCheckDate, DateTime.Now.Date.AddDays(-30));
+            defaults.Add(UserSettingConstants.DaysBetweenUpdateCheck, 1);
+            defaults.Add(UserSettingConstants.UseDarkTheme, false);
+            defaults.Add(UserSettingConstants.ShowPreviewOnSummaryTab, true);
+            defaults.Add(UserSettingConstants.MainWindowMinimize, false);
+            defaults.Add(UserSettingConstants.ClearCompletedFromQueue, false);
+            defaults.Add(UserSettingConstants.ShowStatusInTitleBar, false);
+            defaults.Add(UserSettingConstants.ShowAddAllToQueue, false);
+            defaults.Add(UserSettingConstants.ShowAddSelectionToQueue, false);
+            defaults.Add(UserSettingConstants.MediaPlayerPath, @"C:\Program Files\VideoLAN\vlc\vlc.exe");
+
+            // Output Files
+            defaults.Add(UserSettingConstants.AutoNaming, true);
+            defaults.Add(UserSettingConstants.AutoNamePath, string.Empty);
+            defaults.Add(UserSettingConstants.AutoNameFormat, "{source}-{title}");
+            defaults.Add(UserSettingConstants.AutonameFilePrePostString, "output_");
+            defaults.Add(UserSettingConstants.AutoNameTitleCase, true);
+            defaults.Add(UserSettingConstants.AutoNameRemoveUnderscore, true);
+            defaults.Add(UserSettingConstants.AutonameFileCollisionBehaviour, 0);
+            defaults.Add(UserSettingConstants.AlwaysUseDefaultPath, true);
+            defaults.Add(UserSettingConstants.RemovePunctuation, false);
+            defaults.Add(UserSettingConstants.FileOverwriteBehaviour, 0);
+            defaults.Add(UserSettingConstants.UseM4v, 0);
+
+            // When Done
+            defaults.Add(UserSettingConstants.SendFile, false);
+            defaults.Add(UserSettingConstants.WhenCompleteAction, 0);
+            defaults.Add(UserSettingConstants.WhenDonePerformActionImmediately, false);
+            defaults.Add(UserSettingConstants.PlaySoundWhenDone, false);
+            defaults.Add(UserSettingConstants.PlaySoundWhenQueueDone, false);
+            defaults.Add(UserSettingConstants.WhenDoneAudioFile, string.Empty);
+
+            // Video
+            defaults.Add(UserSettingConstants.EnableQuickSyncEncoding, true);
+            defaults.Add(UserSettingConstants.EnableQuickSyncDecoding, true);
+            defaults.Add(UserSettingConstants.UseQSVDecodeForNonQSVEnc, false);
+            defaults.Add(UserSettingConstants.EnableVceEncoder, true);
+            defaults.Add(UserSettingConstants.EnableNvencEncoder, true);
+            defaults.Add(UserSettingConstants.EnableQuickSyncLowPower, true);
+            
+            // Advanced
+            defaults.Add(UserSettingConstants.PreventSleep, true);
+            defaults.Add(UserSettingConstants.PauseEncodingOnLowBattery, true);
+            defaults.Add(UserSettingConstants.LowBatteryLevel, 15);
+
+            defaults.Add(UserSettingConstants.DisableLibDvdNav, false);
+            defaults.Add(UserSettingConstants.PauseOnLowDiskspace, true);
+            defaults.Add(UserSettingConstants.PauseQueueOnLowDiskspaceLevel, 2000000000L);
+            defaults.Add(UserSettingConstants.PreviewScanCount, 10);
+            defaults.Add(UserSettingConstants.MinScanDuration, 10);
+            defaults.Add(UserSettingConstants.ProcessPriorityInt, 3);
+            defaults.Add(UserSettingConstants.X264Step, 0.5);
+            defaults.Add(UserSettingConstants.SaveLogToCopyDirectory, false);
+            defaults.Add(UserSettingConstants.SaveLogWithVideo, false);
+            defaults.Add(UserSettingConstants.ClearOldLogs, true);
+
+            // Preview
+            defaults.Add(UserSettingConstants.PreviewRotationFlip, false);
+            defaults.Add(UserSettingConstants.LastPreviewDuration, 30);
+            defaults.Add(UserSettingConstants.DefaultPlayer, false);
+
+            // Experimental
+            defaults.Add(UserSettingConstants.ProcessIsolationEnabled, SystemInfo.IsWindows10() ? true : false);
+            defaults.Add(UserSettingConstants.ProcessIsolationPort, 8037);
+            defaults.Add(UserSettingConstants.SimultaneousEncodes, 1);
+
+            // Misc
+            defaults.Add(UserSettingConstants.ScalingMode, 0);
+            defaults.Add(UserSettingConstants.ForcePresetReset, 3);
+            defaults.Add(UserSettingConstants.MetadataPassthru, true);
+
+
+            return defaults;
         }
     }
 }

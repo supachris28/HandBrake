@@ -26,12 +26,14 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 \* ********************************************************************* */
 
-#ifdef USE_QSV
+#include "handbrake/project.h"
 
-#include "hb.h"
-#include "hbffmpeg.h"
-#include "qsv_filter.h"
-#include "qsv_libav.h"
+#if HB_PROJECT_FEATURE_QSV
+
+#include "handbrake/handbrake.h"
+#include "handbrake/hbffmpeg.h"
+#include "handbrake/qsv_filter.h"
+#include "handbrake/qsv_libav.h"
 
 struct hb_filter_private_s
 {
@@ -160,11 +162,11 @@ static int filter_init( hb_qsv_context* qsv, hb_filter_private_t * pv ){
 
         /*
          * In theory, input width/height and decode CropW/CropH should be the
-         * same; however, due to some versions of Libav not applying the H.264
+         * same; however, due to some versions of FFmpeg not applying the H.264
          * "crop rect" properly, there can be a mismatch.
          *
          * Since we want the same bahevior regardless of whether we're using
-         * software or hardware-accelerated decoding, prefer the Libav values.
+         * software or hardware-accelerated decoding, prefer the FFmpeg values.
          *
          * Note that since CropW/CropH may be higher than the decode values, we
          * need to adjust  CropX/CropY to make sure we don't exceed the input's
@@ -181,7 +183,7 @@ static int filter_init( hb_qsv_context* qsv, hb_filter_private_t * pv ){
         pv->CropY += pv->crop[0];
         pv->CropW -= pv->crop[2] + pv->crop[3];
         pv->CropH -= pv->crop[0] + pv->crop[1];
-        
+
 
         qsv_vpp->m_mfxVideoParam.vpp.In.FourCC          = qsv->dec_space->m_mfxVideoParam.mfx.FrameInfo.FourCC;
         qsv_vpp->m_mfxVideoParam.vpp.In.ChromaFormat    = qsv->dec_space->m_mfxVideoParam.mfx.FrameInfo.ChromaFormat;
@@ -408,6 +410,7 @@ static hb_filter_info_t * hb_qsv_filter_info( hb_filter_object_t * filter )
 
 void qsv_filter_close( hb_qsv_context* qsv, HB_QSV_STAGE_TYPE vpp_type ){
     int i = 0;
+    int x = 0;
     hb_qsv_space* vpp_space = 0;
 
     if(qsv && qsv->is_context_active && qsv->vpp_space)
@@ -418,8 +421,8 @@ void qsv_filter_close( hb_qsv_context* qsv, HB_QSV_STAGE_TYPE vpp_type ){
 
             hb_log( "qsv_filter[%s] done: max_surfaces: %u/%u , max_syncs: %u/%u", ((vpp_type == HB_QSV_VPP_DEFAULT)?"Default": "User") ,vpp_space->surface_num_max_used, vpp_space->surface_num, vpp_space->sync_num_max_used, vpp_space->sync_num );
 
-            for (i = 0; i < vpp_space->surface_num; i++){
-                av_freep(&vpp_space->p_surfaces[i]);
+            for (x = 0; x < vpp_space->surface_num; x++){
+                av_freep(&vpp_space->p_surfaces[x]);
             }
             vpp_space->surface_num = 0;
 
@@ -427,9 +430,9 @@ void qsv_filter_close( hb_qsv_context* qsv, HB_QSV_STAGE_TYPE vpp_type ){
                 av_freep(&vpp_space->p_ext_params);
             vpp_space->p_ext_param_num = 0;
 
-            for (i = 0; i < vpp_space->sync_num; i++){
-                av_freep(&vpp_space->p_syncp[i]->p_sync);
-                av_freep(&vpp_space->p_syncp[i]);
+            for (x = 0; x < vpp_space->sync_num; x++){
+                av_freep(&vpp_space->p_syncp[x]->p_sync);
+                av_freep(&vpp_space->p_syncp[x]);
             }
             vpp_space->sync_num = 0;
 
@@ -459,7 +462,7 @@ static void hb_qsv_filter_close( hb_filter_object_t * filter )
         qsv_filter_close(qsv,HB_QSV_VPP_DEFAULT);
 
         // closing the commong stuff
-        hb_qsv_context_clean(qsv);
+        hb_qsv_context_clean(qsv,hb_qsv_full_path_is_enabled(pv->job));
     }
     hb_buffer_list_close(&pv->list);
     free( pv );
@@ -547,7 +550,7 @@ int process_frame(hb_qsv_list* received_item, hb_qsv_context* qsv, hb_filter_pri
                     continue;
                 }
 
-                // shouldnt be a case but drain
+                // shouldn't be a case but drain
                 if(stage){
                         hb_qsv_stage* new_stage = hb_qsv_stage_init();
 
@@ -605,7 +608,7 @@ static int hb_qsv_filter_work( hb_filter_object_t * filter,
         *buf_in = NULL;
         return HB_FILTER_OK;
     }
-    
+
     hb_qsv_context* qsv = pv->job->qsv.ctx;
 
     while(1)
@@ -670,5 +673,5 @@ static int hb_qsv_filter_work( hb_filter_object_t * filter,
     return HB_FILTER_OK;
 }
 
-#endif // USE_QSV
+#endif // HB_PROJECT_FEATURE_QSV
 

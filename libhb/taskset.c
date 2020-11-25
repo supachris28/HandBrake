@@ -1,15 +1,15 @@
 /* taskset.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "hb.h"
-#include "ports.h"
-#include "taskset.h"
+#include "handbrake/handbrake.h"
+#include "handbrake/ports.h"
+#include "handbrake/taskset.h"
 
 int
 taskset_init( taskset_t *ts, int thread_count, size_t arg_size )
@@ -70,7 +70,7 @@ taskset_init( taskset_t *ts, int thread_count, size_t arg_size )
     memset(ts->task_threads_args, 0, ts->arg_size * ts->thread_count );
 
     /*
-     * Inialize bitmaps to all bits set.  This means that any unused bits
+     * Initialize bitmaps to all bits set.  This means that any unused bits
      * in the bitmap are already in the "condition satisfied" state allowing
      * us to test the bitmap 32bits at a time without having to mask off
      * the end.
@@ -78,7 +78,7 @@ taskset_init( taskset_t *ts, int thread_count, size_t arg_size )
     memset(ts->task_begin_bitmap, 0xFF, sizeof( uint32_t ) * ts->bitmap_elements );
     memset(ts->task_complete_bitmap, 0xFF, sizeof( uint32_t ) * ts->bitmap_elements );
     memset(ts->task_stop_bitmap, 0, sizeof( uint32_t ) * ts->bitmap_elements );
-    
+
     /*
      * Important to start off with the threads locked waiting
      * on input, no work completed, and not asked to stop.
@@ -110,8 +110,7 @@ fail:
             free( ts->task_begin_bitmap );
             /* FALL THROUGH */
         case 2:
-            if( ts->task_threads_args == NULL )
-                free( ts->task_threads_args );
+            free( ts->task_threads_args );
             /* FALL THROUGH */
         case 1:
             free( ts->task_threads );

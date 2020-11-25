@@ -3,7 +3,7 @@
 //   This file is part of the HandBrake source code - It may be used under the terms of the GNU General Public License.
 // </copyright>
 // <summary>
-//   A Set of Static Utilites
+//   A Set of Static Utilities
 // </summary>
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -17,10 +17,10 @@ namespace HandBrakeWPF.Utilities
     using System.Text;
     using System.Windows.Forms;
 
-    using HandBrake.ApplicationServices.Utilities;
+    using HandBrake.Interop.Utilities;
 
     /// <summary>
-    /// A Set of Static Utilites
+    /// A Set of Static Utilities
     /// </summary>
     public class GeneralUtilities
     {
@@ -29,7 +29,7 @@ namespace HandBrakeWPF.Utilities
         /// <summary>
         /// The Default Log Directory
         /// </summary>
-        private static readonly string LogDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + "\\HandBrake\\logs";
+        private static readonly string LogDir = DirectoryUtilities.GetLogDirectory();
 
         #endregion
 
@@ -107,15 +107,15 @@ namespace HandBrakeWPF.Utilities
                 gpuBuilder.Append("GPU Information is unavailable");
             }
 
-            logHeader.AppendLine(string.Format("HandBrake {0} - {1}", VersionHelper.GetVersion(), VersionHelper.GetPlatformBitnessVersion()));
-            logHeader.AppendLine(string.Format("OS: {0} - {1}", Environment.OSVersion, Environment.Is64BitOperatingSystem ? "64bit" : "32bit"));
-            logHeader.AppendLine(string.Format("CPU: {0}", SystemInfo.GetCpuCount));
+            logHeader.AppendLine(string.Format("HandBrake {0}", VersionHelper.GetVersion()));
+            logHeader.AppendLine(string.Format("OS: {0}", Environment.OSVersion));
+            logHeader.AppendLine(string.Format("CPU: {0}", SystemInfo.GetCpu));
             logHeader.AppendLine(string.Format("Ram: {0} MB, ", SystemInfo.TotalPhysicalMemory));
             logHeader.AppendLine(string.Format("GPU Information:{0}{1}", Environment.NewLine, gpuBuilder.ToString().TrimEnd()));
             logHeader.AppendLine(string.Format("Screen: {0}x{1}", SystemInfo.ScreenBounds.Bounds.Width, SystemInfo.ScreenBounds.Bounds.Height));
             logHeader.AppendLine(string.Format("Temp Dir: {0}", Path.GetTempPath()));
             logHeader.AppendLine(string.Format("Install Dir: {0}", Application.StartupPath));
-            logHeader.AppendLine(string.Format("Data Dir: {0}\n", Application.UserAppDataPath));
+            logHeader.AppendLine(string.Format("Data Dir: {0}\n", DirectoryUtilities.GetUserStoragePath(VersionHelper.IsNightly())));
 
             logHeader.AppendLine("-------------------------------------------");
 

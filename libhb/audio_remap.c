@@ -1,15 +1,15 @@
 /* audio_remap.c
  *
- * Copyright (c) 2003-2017 HandBrake Team
+ * Copyright (c) 2003-2020 HandBrake Team
  * This file is part of the HandBrake source code
  * Homepage: <http://handbrake.fr/>
  * It may be used under the terms of the GNU General Public License v2.
  * For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "common.h"
-#include "hbffmpeg.h"
-#include "audio_remap.h"
+#include "handbrake/common.h"
+#include "handbrake/hbffmpeg.h"
+#include "handbrake/audio_remap.h"
 
 // source: libavutil/channel_layout.h
 hb_chan_map_t hb_libav_chan_map =

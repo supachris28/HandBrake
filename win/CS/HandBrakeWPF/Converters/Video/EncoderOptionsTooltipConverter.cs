@@ -14,17 +14,14 @@ namespace HandBrakeWPF.Converters.Video
     using System.Linq;
     using System.Windows.Data;
 
-    using HandBrake.ApplicationServices.Interop.Model.Encoding;
+    using HandBrake.Interop.Interop.Model.Encoding;
 
-    using EncodeTask = HandBrakeWPF.Services.Encode.Model.EncodeTask;
-    using VideoLevel = HandBrakeWPF.Services.Encode.Model.Models.Video.VideoLevel;
-    using VideoPreset = HandBrakeWPF.Services.Encode.Model.Models.Video.VideoPreset;
-    using VideoProfile = HandBrakeWPF.Services.Encode.Model.Models.Video.VideoProfile;
-    using VideoTune = HandBrakeWPF.Services.Encode.Model.Models.Video.VideoTune;
+    using EncodeTask = Services.Encode.Model.EncodeTask;
+    using VideoLevel = Services.Encode.Model.Models.Video.VideoLevel;
+    using VideoPreset = Services.Encode.Model.Models.Video.VideoPreset;
+    using VideoProfile = Services.Encode.Model.Models.Video.VideoProfile;
+    using VideoTune = Services.Encode.Model.Models.Video.VideoTune;
 
-    /// <summary>
-    /// The x 264 queue tooltip converter.
-    /// </summary>
     public class EncoderOptionsTooltipConverter : IValueConverter
     {
         /// <summary>
@@ -50,14 +47,10 @@ namespace HandBrakeWPF.Converters.Video
             EncodeTask task = value as EncodeTask;
             if (task != null && (task.VideoEncoder == VideoEncoder.X264 || task.VideoEncoder == VideoEncoder.X264_10 || task.VideoEncoder == VideoEncoder.X265 || task.VideoEncoder == VideoEncoder.X265_10 || task.VideoEncoder == VideoEncoder.X265_12))
             {
-                if (task.ShowAdvancedTab)
-                {
-                    return task.AdvancedEncoderOptions;
-                }
-
                 VideoTune tune = task.VideoTunes.FirstOrDefault();
 
-                return string.Format("Preset: {0}{5}Tune: {1}{5}Profile: {2}{5}Level: {3}{5}Extra Arguments: {4}{5}",
+                return string.Format(
+                    "Preset: {0}, Tune: {1}{5}Profile: {2}, Level: {3}{5}Extra Arguments: {4}{5}",
                     task.VideoPreset != null ? task.VideoPreset.ShortName : VideoPreset.None.DisplayName,
                     tune != null ? tune.ShortName : VideoTune.None.DisplayName,
                     task.VideoProfile != null ? task.VideoProfile.ShortName : VideoProfile.Auto.DisplayName,
@@ -66,7 +59,7 @@ namespace HandBrakeWPF.Converters.Video
                     Environment.NewLine);
             }
 
-            return task != null ? task.AdvancedEncoderOptions : string.Empty;
+            return string.Empty;
         }
 
         /// <summary>

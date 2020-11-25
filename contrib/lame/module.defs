@@ -1,20 +1,15 @@
 $(eval $(call import.MODULE.defs,LAME,lame))
 $(eval $(call import.CONTRIB.defs,LAME))
 
-LAME.FETCH.url    = https://download.handbrake.fr/handbrake/contrib/lame-3.98.tar.gz
-LAME.FETCH.sha256 = 40235e84dfe4760ad3f352590a64b7bda1502a386c97d06229df356426e37686
-LAME.EXTRACT.tarbase = lame
+LAME.FETCH.url     = https://github.com/HandBrake/HandBrake-contribs/releases/download/contribs/lame-3.100.tar.gz
+LAME.FETCH.url    += https://sourceforge.net/projects/lame/files/lame/3.100/lame-3.100.tar.gz
+LAME.FETCH.sha256  = ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
 
-# TODO: Upstream archive differs
-#LAME.FETCH.url    = https://sourceforge.net/projects/lame/files/lame/3.98/lame-398.tar.gz
-#LAME.FETCH.sha256 = 8396bcb425ddcbfb8027d5712fa8878a2257006ccbe3ac7a772e1652e43d19b1
-#LAME.FETCH.distfile  = lame-3.98.tar.gz
-#LAME.EXTRACT.tarbase = lame
-#
-# TODO: lame >= 3.99.5, tarbase unnecessary
-#LAME.FETCH.url    = https://sourceforge.net/projects/lame/files/lame/3.99/lame-3.99.5.tar.gz
-#LAME.FETCH.sha256 = 24346b4158e4af3bd9f2e194bb23eb473c75fb7377011523353196b19b9a23ff
-
+LAME.CONFIGURE.extra += --disable-frontend
 ifneq (none,$(FFMPEG.GCC.g))
 	LAME.CONFIGURE.extra += --enable-debug
+endif
+
+ifeq (1-msys,$(HOST.cross)-$(BUILD.system))
+    LAME.CONFIGURE.args.build = --build=$(BUILD.machine)-unknown-linux-gnu
 endif

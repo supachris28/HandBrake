@@ -1,13 +1,12 @@
 /*
  * render_button.c
- * Copyright (C) John Stebbins 2008-2017 <stebbins@stebbins>
+ * Copyright (C) John Stebbins 2008-2020 <stebbins@stebbins>
  *
  * render_button.c is free software.
  *
  * You may redistribute it and/or modify it under the terms of the
- * GNU General Public License, as published by the Free Software
- * Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * GNU General Public License version 2, as published by the Free Software
+ * Foundation.
  *
  * render_button.c is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -159,7 +158,7 @@ static void
 custom_cell_renderer_button_finalize (GObject *object)
 {
     /*
-    If you need to do anyting with the renderer button ...
+    If you need to do anything with the renderer button ...
     CustomCellRendererProgress *cellrendererbutton = CUSTOM_CELL_RENDERER_BUTTON(object);
     */
 

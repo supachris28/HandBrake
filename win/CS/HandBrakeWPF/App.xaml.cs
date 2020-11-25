@@ -10,18 +10,27 @@
 namespace HandBrakeWPF
 {
     using System;
+    using System.Collections.Generic;
+    using System.Globalization;
     using System.IO;
     using System.Linq;
+    using System.Threading;
     using System.Windows;
+    using System.Windows.Controls;
 
     using Caliburn.Micro;
 
+    using HandBrake.Interop.Interop;
+
+    using HandBrakeWPF.Instance;
+    using HandBrakeWPF.Model;
+    using HandBrakeWPF.Services.Interfaces;
     using HandBrakeWPF.Startup;
     using HandBrakeWPF.Utilities;
     using HandBrakeWPF.ViewModels;
     using HandBrakeWPF.ViewModels.Interfaces;
 
-    using GeneralApplicationException = HandBrakeWPF.Exceptions.GeneralApplicationException;
+    using GeneralApplicationException = Exceptions.GeneralApplicationException;
 
     /// <summary>
     /// Interaction logic for App.xaml
@@ -34,8 +43,10 @@ namespace HandBrakeWPF
         public App()
         {
             Application.Current.Dispatcher.UnhandledException += this.Dispatcher_UnhandledException;
-            AppDomain.CurrentDomain.UnhandledException +=
-                this.CurrentDomain_UnhandledException;
+            AppDomain.CurrentDomain.UnhandledException += this.CurrentDomain_UnhandledException;
+            AppDomain.CurrentDomain.ProcessExit += this.CurrentDomain_ProcessExit;
+            
+            ToolTipService.ShowDurationProperty.OverrideMetadata(typeof(DependencyObject), new FrameworkPropertyMetadata(15000));
         }
 
         /// <summary>
@@ -46,10 +57,18 @@ namespace HandBrakeWPF
         /// </param>
         protected override void OnStartup(StartupEventArgs e)
         {
+            // We don't support Windows XP / 2003 / 2003 R2 / Vista / 2008
             OperatingSystem os = Environment.OSVersion;
-            if ((os.Platform == PlatformID.Win32NT) && (os.Version.Major == 5 && os.Version.Minor <= 1))
+            if (((os.Platform == PlatformID.Win32NT) && (os.Version.Major == 5)) || ((os.Platform == PlatformID.Win32NT) && (os.Version.Major == 6 && os.Version.Minor < 1)))
             {
-                MessageBox.Show("Windows XP and earlier are no longer supported. Version 0.9.9 was the last version to support these versions. ", "Notice", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(HandBrakeWPF.Properties.Resources.OsVersionWarning, HandBrakeWPF.Properties.Resources.Warning, MessageBoxButton.OK, MessageBoxImage.Warning);
+                Application.Current.Shutdown();
+                return;
+            }
+
+            if (!Environment.Is64BitOperatingSystem)
+            {
+                MessageBox.Show(HandBrakeWPF.Properties.Resources.OsBitnessWarning, HandBrakeWPF.Properties.Resources.Warning, MessageBoxButton.OK, MessageBoxImage.Warning);
                 Application.Current.Shutdown();
                 return;
             }
@@ -61,6 +80,17 @@ namespace HandBrakeWPF
                 return;
             }
 
+            if (e.Args.Any(f => f.StartsWith("--recover-queue-ids")))
+            {
+                string command = e.Args.FirstOrDefault(f => f.StartsWith("--recover-queue-ids"));
+                if (!string.IsNullOrEmpty(command))
+                {
+                    command = command.Replace("--recover-queue-ids=", string.Empty);
+                    List<string> processIds = command.Split(',').ToList();
+                    StartupOptions.QueueRecoveryIds = processIds;
+                }
+            }
+            
             if (e.Args.Any(f => f.Equals("--auto-start-queue")))
             {
                 StartupOptions.AutoRestartQueue = true;
@@ -69,9 +99,55 @@ namespace HandBrakeWPF
             // Portable Mode
             if (Portable.IsPortable())
             {
-                Portable.Initialise();
+                if (!Portable.Initialise())
+                {
+                    Application.Current.Shutdown();
+                    return;
+                }
             }
 
+            // Setup the UI Language
+            IUserSettingService userSettingService = IoC.Get<IUserSettingService>();
+            string culture = userSettingService.GetUserSetting<string>(UserSettingConstants.UiLanguage);
+            if (!string.IsNullOrEmpty(culture))
+            {
+                InterfaceLanguage language = InterfaceLanguageUtilities.FindInterfaceLanguage(culture);
+                if (language != null)
+                {
+                    CultureInfo ci = new CultureInfo(language.Culture);
+                    Thread.CurrentThread.CurrentUICulture = ci;
+                }
+            }
+
+            bool useDarkTheme = userSettingService.GetUserSetting<bool>(UserSettingConstants.UseDarkTheme);
+            if (useDarkTheme && SystemInfo.IsWindows10())
+            {
+                ResourceDictionary darkTheme = new ResourceDictionary();
+                darkTheme.Source = new Uri("Themes/Dark.xaml", UriKind.Relative);
+                Application.Current.Resources.MergedDictionaries.Add(darkTheme);
+            }
+
+            // NO-Hardware Mode
+            bool noHardware = e.Args.Any(f => f.Equals("--no-hardware")) || (Portable.IsPortable() && !Portable.IsHardwareEnabled());
+
+            // Initialise the Engine
+            HandBrakeWPF.Helpers.LogManager.Init();
+
+            try
+            {
+                HandBrakeInstanceManager.Init(noHardware);
+            }
+            catch (Exception exception)
+            {
+                if (!noHardware)
+                {
+                    MessageBox.Show(HandBrakeWPF.Properties.Resources.Startup_InitFailed, HandBrakeWPF.Properties.Resources.Error, MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+
+                throw exception;
+            }
+
+            // Initialise the GUI
             base.OnStartup(e);
 
             // If we have a file dropped on the icon, try scanning it.
@@ -83,8 +159,13 @@ namespace HandBrakeWPF
             }
         }
 
+        private void CurrentDomain_ProcessExit(object sender, System.EventArgs e)
+        {
+            HandBrakeUtils.DisposeGlobal();
+        }
+
         /// <summary>
-        /// Non-UI Thread expection handler.
+        /// Non-UI Thread exception handler.
         /// </summary>
         /// <param name="sender">
         /// The sender.
@@ -94,15 +175,17 @@ namespace HandBrakeWPF
         /// </param>
         private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
         {
-            if (e.ExceptionObject.GetType() == typeof(FileNotFoundException))
-            {
-                GeneralApplicationException exception = new GeneralApplicationException("A file appears to be missing.", "Try re-installing Microsoft .NET Framework 4.0", (Exception)e.ExceptionObject);
-                this.ShowError(exception);
-            }
-            else
-            {
-                this.ShowError(e.ExceptionObject);
-            }
+            Caliburn.Micro.Execute.OnUIThreadAsync(() => {
+                if (e.ExceptionObject.GetType() == typeof(FileNotFoundException))
+                {
+                    GeneralApplicationException exception = new GeneralApplicationException("A file appears to be missing.", "Try re-installing Microsoft .NET Framework 4.8", (Exception)e.ExceptionObject);
+                    this.ShowError(exception);
+                }
+                else
+                {
+                    this.ShowError(e.ExceptionObject);
+                }
+            });
         }
 
         /// <summary>
@@ -119,7 +202,7 @@ namespace HandBrakeWPF
         {
             if (e.Exception.GetType() == typeof(FileNotFoundException))
             {
-                GeneralApplicationException exception = new GeneralApplicationException("A file appears to be missing.", "Try re-installing Microsoft .NET Framework 4.0", e.Exception);
+                GeneralApplicationException exception = new GeneralApplicationException("A file appears to be missing.", "Try re-installing Microsoft .NET Framework 4.7.1", e.Exception);
                 this.ShowError(exception);
             }
             else if (e.Exception.GetType() == typeof(GeneralApplicationException))
@@ -149,9 +232,10 @@ namespace HandBrakeWPF
             try
             {
                 IWindowManager windowManager = IoC.Get<IWindowManager>();
+                IErrorService errorService = IoC.Get<IErrorService>();
                 if (windowManager != null)
                 {
-                    ErrorViewModel errorView = new ErrorViewModel();
+                    ErrorViewModel errorView = new ErrorViewModel(errorService);
                     GeneralApplicationException applicationException = null;
                     if (exception.GetType() == typeof(GeneralApplicationException))
                     {
@@ -191,7 +275,7 @@ namespace HandBrakeWPF
             }
             catch (Exception)
             {
-                MessageBox.Show("An Unknown Error has occured. \n\n Exception:" + exception, "Unhandled Exception",
+                MessageBox.Show("An Unknown Error has occurred. \n\n Exception:" + exception, "Unhandled Exception",
                      MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }

@@ -1,29 +1,23 @@
-//
-//  HBSecurityAccessToken.h
-//  HandBrake
-//
-//  Created by Damiano Galassi on 24/01/17.
-//
-//
+/*  HBSecurityAccessToken.h $
+
+ This file is part of the HandBrake source code.
+ Homepage: <http://handbrake.fr/>.
+ It may be used under the terms of the GNU General Public License. */
 
 #import <Foundation/Foundation.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 @protocol HBSecurityScope <NSObject>
 
-/*  Given an instance, make the resource referenced by the job accessible to the process.
- */
+///  Given an instance, make the resource referenced by the instance accessible to the process.
 - (BOOL)startAccessingSecurityScopedResource;
 
-/*  Revokes the access granted to the url by a prior successful call to startAccessingSecurityScopedResource.
- */
+/// Revokes the access granted to the instance by a prior successful call to startAccessingSecurityScopedResource.
 - (void)stopAccessingSecurityScopedResource;
 
-@end
-
-@interface NSURL (HBSecurityScope) <HBSecurityScope>
-
-- (BOOL)startAccessingSecurityScopedResource;
-- (void)stopAccessingSecurityScopedResource;
+/// Refresh the resources (for example if the instance stores a security scoped bookmark, it will recreate the urls from the bookmark.
+- (void)refreshSecurityScopedResources;
 
 @end
 
@@ -33,3 +27,5 @@
 - (instancetype)initWithObject:(id<HBSecurityScope>)object;
 
 @end
+
+NS_ASSUME_NONNULL_END

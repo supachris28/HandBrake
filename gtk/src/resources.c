@@ -1,14 +1,13 @@
 /* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
 /*
  * resources.c
- * Copyright (C) John Stebbins 2008-2017 <stebbins@stebbins>
+ * Copyright (C) John Stebbins 2008-2020 <stebbins@stebbins>
  *
  * resources.c is free software.
  *
  * You may redistribute it and/or modify it under the terms of the
- * GNU General Public License, as published by the Free Software
- * Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * GNU General Public License version 2, as published by the Free Software
+ * Foundation.
  *
  * resources.c is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -48,21 +47,21 @@ ghb_resource_init()
     GResource *data_res = ghb_data_get_resource();
 
     gbytes = g_resource_lookup_data(data_res,
-                        "/org/handbrake/data/internal_defaults.json", 0, NULL);
+                    "/fr/handbrake/ghb/data/internal_defaults.json", 0, NULL);
     data = g_bytes_get_data(gbytes, &data_size);
     val = ghb_json_parse(data);
     g_bytes_unref(gbytes);
     ghb_dict_set(resources, "internal-defaults", val);
 
     gbytes = g_resource_lookup_data(data_res,
-                        "/org/handbrake/data/widget.deps", 0, NULL);
+                    "/fr/handbrake/ghb/data/widget.deps", 0, NULL);
     data = g_bytes_get_data(gbytes, &data_size);
     val = ghb_json_parse(data);
     g_bytes_unref(gbytes);
     ghb_dict_set(resources, "widget-deps", val);
 
     gbytes = g_resource_lookup_data(data_res,
-                        "/org/handbrake/data/widget_reverse.deps", 0, NULL);
+                    "/fr/handbrake/ghb/data/widget_reverse.deps", 0, NULL);
     data = g_bytes_get_data(gbytes, &data_size);
     val = ghb_json_parse(data);
     g_bytes_unref(gbytes);

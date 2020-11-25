@@ -9,7 +9,7 @@
              mc:Ignorable="d" SizeToContent="WidthAndHeight"
              TextOptions.TextFormattingMode="Display"
              WindowStartupLocation="CenterScreen"
-             cal:Message.Attach="[Event SizeChanged] = [Action PreviewSizeChanged($eventArgs)]"       
+             cal:Message.Attach="[Event Closing] = [Action Close]"
              Title="{Binding Title}">
 
     <Window.Resources>
@@ -21,7 +21,7 @@
             <TextBlock Text="No Preview Available" VerticalAlignment="Center" Padding="60,60,60,60" FontWeight="Bold" FontSize="25" Foreground="DarkGray" />
         </StackPanel>
 
-        <Image Source="{Binding PreviewImage}" MaxWidth="{Binding Width}" MaxHeight="{Binding Height}" />
+        <Image x:Name="previewImage" Source="{Binding PreviewImage}" MaxWidth="{Binding Width}" MaxHeight="{Binding Height}" MouseWheel="PreviewImage_OnMouseWheel" />
 
 
         <Border BorderBrush="WhiteSmoke" BorderThickness="1,1,1,1" CornerRadius="8,8,8,8" Padding="8"
@@ -31,30 +31,30 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <Slider Maximum="{Binding TotalPreviews}" Minimum="0" 
+
+                <Slider Maximum="{Binding TotalPreviews}" Minimum="0" AutomationProperties.Name="{x:Static Properties:Resources.StaticPreviewView_SelectPreviewImage}"
                 Value="{Binding SelectedPreviewImage}"
                 VerticalAlignment="Center"
                 HorizontalAlignment="Stretch"
-                Background="Transparent" TickPlacement="TopLeft"
-                        Margin="0,0,0,5"
-                />
+                Background="Transparent" TickPlacement="TopLeft" Margin="0,0,0,5" />
 
-                <StackPanel Orientation="Horizontal" Grid.Row="1" HorizontalAlignment="Left">
-                    <Button Content="{x:Static Properties:ResourcesUI.StaticPreviewView_LivePreview}" Padding="8,2" cal:Message.Attach="[Event Click] = [Action Play]" />
-                    <TextBlock Margin="10,0,5,0" VerticalAlignment="Center" Foreground="White" Text="{x:Static Properties:ResourcesUI.StaticPreviewView_Duration}" />
+                <CheckBox IsChecked="{Binding PreviewRotateFlip}" Content="{x:Static Properties:Resources.StaticPreviewView_PreviewRotationFlip}" Foreground="White" Grid.Row="1" Margin="0,0,0,10" />
+
+                <StackPanel Orientation="Horizontal" Grid.Row="2" HorizontalAlignment="Left">
+                    <Button Content="{x:Static Properties:Resources.StaticPreviewView_LivePreview}" Padding="8,2" cal:Message.Attach="[Event Click] = [Action Play]" Visibility="{Binding IsEncoding, Converter={StaticResource booleanToVisibilityConverter}, ConverterParameter=true}" />
+                    <Button Content="{x:Static Properties:Resources.StaticPreviewView_CancelPreview}" Padding="8,2" cal:Message.Attach="[Event Click] = [Action CancelEncode]" Visibility="{Binding IsEncoding, Converter={StaticResource booleanToVisibilityConverter}, ConverterParameter=false}" />
+
+                    <TextBlock Margin="10,0,5,0" VerticalAlignment="Center" Foreground="White" Text="{x:Static Properties:Resources.StaticPreviewView_Duration}" />
                     <ComboBox Width="60"
                       ItemsSource="{Binding AvailableDurations}"
                       SelectedItem="{Binding Duration}" />
 
-                    <CheckBox VerticalAlignment="Center" Content="{x:Static Properties:ResourcesUI.StaticPreviewView_UseSystemDefault}" Foreground="White" Margin="10,0,0,0" IsChecked="{Binding UseSystemDefaultPlayer}" />
+                    <CheckBox VerticalAlignment="Center" Content="{x:Static Properties:Resources.StaticPreviewView_UseSystemDefault}" Foreground="White" Margin="10,0,0,0" IsChecked="{Binding UseSystemDefaultPlayer}" />
                 </StackPanel>
 
-                <StackPanel Orientation="Horizontal" Grid.Row="2" Margin="0,5,0,0">
-
-                </StackPanel>
-
-                <Grid  Margin="0,10,10,0" Grid.Row="2" Visibility="{Binding IsEncoding, Converter={StaticResource booleanToVisibilityConverter}}">
+                <Grid  Margin="0,10,10,0" Grid.Row="3" Visibility="{Binding IsEncoding, Converter={StaticResource booleanToVisibilityConverter}}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="23*" />
                         <ColumnDefinition Width="289*"/>
@@ -63,10 +63,6 @@
                     <ProgressBar MinHeight="5" Maximum="100" Minimum="0" Value="{Binding PercentageValue}" Grid.Column="0" Grid.ColumnSpan="2" />
                     <TextBlock Margin="5,0,0,0" Text="{Binding Percentage}" Grid.Column="2" HorizontalAlignment="Right" Foreground="White" />
                 </Grid>
-
-
-
-
             </Grid>
 
         </Border>

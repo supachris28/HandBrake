@@ -1,14 +1,13 @@
 /* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
 /*
  * subtitlehandler.h
- * Copyright (C) John Stebbins 2008-2017 <stebbins@stebbins>
+ * Copyright (C) John Stebbins 2008-2020 <stebbins@stebbins>
  *
  * subtitlehandler.h is free software.
  *
  * You may redistribute it and/or modify it under the terms of the
- * GNU General Public License, as published by the Free Software
- * Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * GNU General Public License version 2, as published by the Free Software
+ * Foundation.
  *
  * subtitlehandler.h is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -38,5 +37,7 @@ void ghb_subtitle_set_pref_lang(GhbValue *settings);
 void ghb_clear_subtitle_selection(GtkBuilder *builder);
 GhbValue *ghb_get_subtitle_list(GhbValue *settings);
 GhbValue *ghb_get_subtitle_settings(GhbValue *settings);
+char * ghb_subtitle_short_description(const GhbValue *subsource,
+                                      const GhbValue *subsettings);
 
 #endif // _SUBTITLEHANDLER_H_

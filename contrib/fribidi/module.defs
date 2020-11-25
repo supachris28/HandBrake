@@ -1,18 +1,17 @@
-ifeq (1-mingw,$(BUILD.cross)-$(BUILD.system))
-__deps__ := PTHREADW32
-endif
-
 $(eval $(call import.MODULE.defs,FRIBIDI,fribidi))
 $(eval $(call import.CONTRIB.defs,FRIBIDI))
 
-FRIBIDI.FETCH.url     = https://download.handbrake.fr/handbrake/contrib/fribidi-0.19.7.tar.bz2
-FRIBIDI.FETCH.url    += https://fribidi.org/download/fribidi-0.19.7.tar.bz2
-FRIBIDI.FETCH.sha256  = 08222a6212bbc2276a2d55c3bf370109ae4a35b689acbc66571ad2a670595a8e
+FRIBIDI.FETCH.url      = https://github.com/HandBrake/HandBrake-contribs/releases/download/contribs/fribidi-1.0.10.tar.gz
+FRIBIDI.FETCH.url     += https://github.com/fribidi/fribidi/archive/v1.0.10.tar.gz
+FRIBIDI.FETCH.sha256   = 3ebb19c4184ed6dc324d2e291d7465bc6108a20be019f053f33228e07e879c4f
+FRIBIDI.FETCH.basename = fribidi-1.0.10.tar.gz
 
-ifeq (1-mingw,$(BUILD.cross)-$(BUILD.system))
-    FRIBIDI.CONFIGURE.extra = --with-glib=no
-else ifeq (darwin,$(BUILD.system))
-    FRIBIDI.CONFIGURE.extra = --with-glib=no
+FRIBIDI.CONFIGURE.bootstrap = rm -fr aclocal.m4 autom4te.cache configure; autoreconf -I m4 -fiv;
+
+ifeq ($(HOST.system),darwin)
+    FRIBIDI.CONFIGURE.extra = CFLAGS_FOR_BUILD="-arch $(BUILD.machine)"
+    ifneq ($(HOST.machine),$(BUILD.machine))
+        FRIBIDI.CONFIGURE.args.host = --host=$(HOST.machine:arm64=aarch64)-$(HOST.vendor)-$(HOST.system)
+        FRIBIDI.CONFIGURE.args.build = --build=$(BUILD.machine:arm64=aarch64)-$(BUILD.vendor)-$(BUILD.system)
+    endif
 endif
-
-FRIBIDI.CONFIGURE.bootstrap = ./bootstrap;

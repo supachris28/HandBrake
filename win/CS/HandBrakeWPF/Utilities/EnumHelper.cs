@@ -13,12 +13,11 @@ namespace HandBrakeWPF.Utilities
     using System.Collections.Generic;
     using System.Collections.ObjectModel;
     using System.ComponentModel;
-    using System.ComponentModel.DataAnnotations;
     using System.Diagnostics;
     using System.Linq;
     using System.Reflection;
 
-    using HandBrake.ApplicationServices.Attributes;
+    using HandBrake.Interop.Attributes;
 
     /// <summary>
     /// Enum Helpers
@@ -39,11 +38,21 @@ namespace HandBrakeWPF.Utilities
         /// </returns>
         public static string GetDescription(T value)
         {
+            if (value == null)
+            {
+                return string.Empty;
+            }
+
             FieldInfo fieldInfo = value.GetType().GetField(value.ToString());
-            DescriptionAttribute[] attributes =
+            if (fieldInfo != null)
+            {
+                DescriptionAttribute[] attributes =
                   (DescriptionAttribute[])fieldInfo.GetCustomAttributes(
                   typeof(DescriptionAttribute), false);
-            return (attributes.Length > 0) ? attributes[0].Description : value.ToString();
+                return (attributes.Length > 0) ? attributes[0].Description : value.ToString();
+            }
+
+            return string.Empty;
         }
 
         /// <summary>
@@ -53,10 +62,20 @@ namespace HandBrakeWPF.Utilities
         /// <returns>A string name</returns>
         public static string GetDisplay(T value)
         {
-            FieldInfo fieldInfo = value.GetType().GetField(value.ToString());
-            DisplayAttribute[] attributes = (DisplayAttribute[])fieldInfo.GetCustomAttributes(typeof(DisplayAttribute), false);
+            if (value == null)
+            {
+                return string.Empty;
+            }
 
-            return (attributes.Length > 0) ? attributes[0].Name : value.ToString();
+            FieldInfo fieldInfo = value.GetType().GetField(value.ToString());
+            if (fieldInfo != null)
+            {
+                DisplayName[] attributes = (DisplayName[])fieldInfo.GetCustomAttributes(typeof(DisplayName), false);
+
+                return (attributes.Length > 0) ? attributes[0].Name : value.ToString();
+            }
+
+            return string.Empty;
         }
 
         /// <summary>
@@ -109,10 +128,36 @@ namespace HandBrakeWPF.Utilities
         /// </returns>
         public static string GetShortName(T value)
         {
-            FieldInfo fieldInfo = value.GetType().GetField(value.ToString());
-            ShortName[] attributes = (ShortName[])fieldInfo.GetCustomAttributes(typeof(ShortName), false);
+            if (value == null)
+            {
+                return string.Empty;
+            }
 
-            return (attributes.Length > 0) ? attributes[0].Name : value.ToString(); 
+            FieldInfo fieldInfo = value.GetType().GetField(value.ToString());
+            if (fieldInfo != null)
+            {
+                ShortName[] attributes = (ShortName[])fieldInfo.GetCustomAttributes(typeof(ShortName), false);
+                return (attributes.Length > 0) ? attributes[0].Name : value.ToString();
+            }
+
+            return string.Empty;
+        }
+
+        public static T GetAttribute<T, TK>(TK value) where T : Attribute
+        {
+            if (value == null)
+            {
+                return null;
+            }
+
+            FieldInfo fieldInfo = value.GetType().GetField(value.ToString());
+            if (fieldInfo != null)
+            {
+                T[] attributes = (T[])fieldInfo.GetCustomAttributes(typeof(T), false);
+                return (attributes.Length > 0) ? attributes[0] : null;
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -139,7 +184,10 @@ namespace HandBrakeWPF.Utilities
         {
             var strings = new Collection<string>();
             foreach (T e in Enum.GetValues(enumType))
+            {
                 strings.Add(GetDisplay(e));
+            }
+
             return strings;
         }
 

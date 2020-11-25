@@ -1,14 +1,14 @@
 /* batch.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
- 
-#include "hb.h"
-#include "lang.h"
+
+#include "handbrake/handbrake.h"
+#include "handbrake/lang.h"
 
 struct hb_batch_s
 {
@@ -53,6 +53,12 @@ hb_batch_t * hb_batch_init( hb_handle_t *h, char * path )
     {
         count++;
     }
+
+    if (count == 0)
+    {
+        return NULL;
+    }
+
     files = malloc(count * sizeof(char*));
 
     // Find all regular files

@@ -9,29 +9,34 @@
 
 namespace HandBrakeWPF.Model
 {
-    using System.ComponentModel.DataAnnotations;
+    using HandBrake.Interop.Attributes;
+
+    using HandBrakeWPF.Properties;
 
     /// <summary>
     /// A enum representing each tab on the options screen.
     /// </summary>
     public enum OptionsTab
     {
-        [Display(Name = "General")]
+        [DisplayName(typeof(Resources), "Options_General")]
         General = 0,
 
-        [Display(Name = "Output Files")]
+        [DisplayName(typeof(Resources), "Options_OutputFiles")]
         OutputFiles,
 
-        [Display(Name = "Video")]
+        [DisplayName(typeof(Resources), "Options_WhenDone")]
+        WhenDone,
+
+        [DisplayName(typeof(Resources), "Options_Video")]
         Video,
 
-        [Display(Name = "Advanced")]
+        [DisplayName(typeof(Resources), "Options_Advanced")]
         Advanced,
 
-        [Display(Name = "Updates")]
+        [DisplayName(typeof(Resources), "Options_Updates")]
         Updates,
 
-        [Display(Name = "About HandBrake")]
+        [DisplayName(typeof(Resources), "Options_About")]
         About,
     }
 }

@@ -18,7 +18,7 @@ namespace HandBrakeWPF.ViewModels
     using HandBrakeWPF.Services.Interfaces;
     using HandBrakeWPF.ViewModels.Interfaces;
 
-    using IQueueProcessor = HandBrakeWPF.Services.Queue.Interfaces.IQueueProcessor;
+    using IQueueService = HandBrakeWPF.Services.Queue.Interfaces.IQueueService;
 
     /// <summary>
     /// The Shell View Model
@@ -189,11 +189,11 @@ namespace HandBrakeWPF.ViewModels
         /// </returns>
         public bool CanClose()
         {
-            IQueueProcessor processor = IoC.Get<IQueueProcessor>();
-            if (processor != null && processor.EncodeService.IsEncoding)
+            IQueueService processor = IoC.Get<IQueueService>();
+            if (processor != null && processor.IsEncoding)
             {
                 MessageBoxResult result =
-                    errorService.ShowMessageBox(
+                    this.errorService.ShowMessageBox(
                         Resources.ShellViewModel_CanClose,
                         Resources.Warning,
                         MessageBoxButton.YesNo,
@@ -201,22 +201,19 @@ namespace HandBrakeWPF.ViewModels
 
                 if (result == MessageBoxResult.Yes)
                 {
-                    processor.Pause();
-                    processor.EncodeService.Stop();
-                    if (this.MainViewModel != null)
-                    {
-                        this.MainViewModel.Shutdown();
-                    }
+                    processor.Stop(true);
+                    this.MainViewModel?.Shutdown();
 
                     return true;
                 }
+
                 return false;
             }
 
-            if (this.MainViewModel != null)
-            {
-                this.MainViewModel.Shutdown();
-            }
+            this.OptionsViewModel?.Close();
+
+            this.MainViewModel?.Shutdown();
+
             return true;
         }
     }

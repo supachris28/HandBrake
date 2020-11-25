@@ -1,6 +1,6 @@
 /* param.c
  *
- * Copyright (c) 2003-2017 HandBrake Team
+ * Copyright (c) 2003-2020 HandBrake Team
  * This file is part of the HandBrake source code
  * Homepage: <http://handbrake.fr/>.
  * It may be used under the terms of the GNU General Public License v2.
@@ -8,12 +8,13 @@
  * http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "hb_dict.h"
-#include "param.h"
-#include "common.h"
-#include "colormap.h"
-#ifdef USE_QSV
-#include "qsv_common.h"
+#include "handbrake/project.h"
+#include "handbrake/hb_dict.h"
+#include "handbrake/param.h"
+#include "handbrake/common.h"
+#include "handbrake/colormap.h"
+#if HB_PROJECT_FEATURE_QSV
+#include "handbrake/qsv_common.h"
 #endif
 #include <regex.h>
 
@@ -37,6 +38,27 @@ static hb_filter_param_t nlmeans_tunes[] =
     { 5, "Tape",        "tape",       NULL              },
     { 6, "Sprite",      "sprite",     NULL              },
     { 0, NULL,          NULL,         NULL              }
+};
+
+static hb_filter_param_t deblock_presets[] =
+{
+    { 0, "Off",         "off",        "disable=1"                  },
+    { 1, "Custom",      "custom",     NULL                         },
+    { 2, "Ultralight",  "ultralight", "strength=weak:thresh=20"    },
+    { 3, "Light",       "light",      "strength=weak:thresh=50"    },
+    { 4, "Medium",      "medium",     "strength=strong:thresh=20"  },
+    { 5, "Strong",      "strong",     "strength=strong:thresh=50"  },
+    { 5, "Stronger",    "stronger",   "strength=strong:thresh=75"  },
+    { 5, "Very Strong", "verystrong", "strength=strong:thresh=100" },
+    { 0, NULL,          NULL,         NULL                         }
+};
+
+static hb_filter_param_t deblock_tunes[] =
+{
+    { 1, "Small (4x4)",   "small",  "blocksize=4"  },
+    { 2, "Medium (8x8)",  "medium", NULL           },
+    { 3, "Large (16x16)", "large",  "blocksize=16" },
+    { 0, NULL,            NULL,     NULL           }
 };
 
 static hb_filter_param_t hqdn3d_presets[] =
@@ -68,6 +90,74 @@ static hb_filter_param_t hqdn3d_presets[] =
       "y-spatial=2:cb-spatial=1:cr-spatial=1:"
       "y-temporal=2:cb-temporal=3:cr-temporal=3"
                                                         },
+};
+
+static hb_filter_param_t chroma_smooth_presets[] =
+{
+    { 1, "Custom",      "custom",     NULL              },
+    { 2, "Ultralight",  "ultralight", NULL              },
+    { 3, "Light",       "light",      NULL              },
+    { 4, "Medium",      "medium",     NULL              },
+    { 5, "Strong",      "strong",     NULL              },
+    { 6, "Stronger",    "stronger",   NULL              },
+    { 7, "Very Strong", "verystrong", NULL              },
+    { 0, NULL,          NULL,         NULL              }
+};
+
+static hb_filter_param_t chroma_smooth_tunes[] =
+{
+    { 0, "None",        "none",       NULL              },
+    { 1, "Tiny",        "tiny",       NULL              },
+    { 2, "Small",       "small",      NULL              },
+    { 3, "Medium",      "medium",     NULL              },
+    { 4, "Wide",        "wide",       NULL              },
+    { 5, "Very Wide",   "verywide",   NULL              },
+    { 0, NULL,          NULL,         NULL              }
+};
+
+static hb_filter_param_t unsharp_presets[] =
+{
+    { 1, "Custom",      "custom",     NULL              },
+    { 2, "Ultralight",  "ultralight", NULL              },
+    { 3, "Light",       "light",      NULL              },
+    { 4, "Medium",      "medium",     NULL              },
+    { 5, "Strong",      "strong",     NULL              },
+    { 6, "Stronger",    "stronger",   NULL              },
+    { 7, "Very Strong", "verystrong", NULL              },
+    { 0, NULL,          NULL,         NULL              }
+};
+
+static hb_filter_param_t unsharp_tunes[] =
+{
+    { 0, "None",          "none",         NULL              },
+    { 1, "Ultrafine",     "ultrafine",    NULL              },
+    { 2, "Fine",          "fine",         NULL              },
+    { 3, "Medium",        "medium",       NULL              },
+    { 4, "Coarse",        "coarse",       NULL              },
+    { 5, "Very Coarse",   "verycoarse",   NULL              },
+    { 0, NULL,            NULL,           NULL              }
+};
+
+static hb_filter_param_t lapsharp_presets[] =
+{
+    { 1, "Custom",      "custom",     NULL              },
+    { 2, "Ultralight",  "ultralight", NULL              },
+    { 3, "Light",       "light",      NULL              },
+    { 4, "Medium",      "medium",     NULL              },
+    { 5, "Strong",      "strong",     NULL              },
+    { 6, "Stronger",    "stronger",   NULL              },
+    { 7, "Very Strong", "verystrong", NULL              },
+    { 0, NULL,          NULL,         NULL              }
+};
+
+static hb_filter_param_t lapsharp_tunes[] =
+{
+    { 0, "None",        "none",       NULL              },
+    { 1, "Film",        "film",       NULL              },
+    { 2, "Grain",       "grain",      NULL              },
+    { 3, "Animation",   "animation",  NULL              },
+    { 4, "Sprite",      "sprite",     NULL              },
+    { 0, NULL,          NULL,         NULL              }
 };
 
 static hb_filter_param_t detelecine_presets[] =
@@ -115,7 +205,7 @@ static hb_filter_param_t deinterlace_presets[] =
     { 3, "Default",            "default",      "mode=3"         },
     { 2, "Skip Spatial Check", "skip-spatial", "mode=1"         },
     { 5, "Bob",                "bob",          "mode=7"         },
-#ifdef USE_QSV
+#if HB_PROJECT_FEATURE_QSV
     { 6, "QSV",                "qsv",          "mode=11"        },
 #endif
     { 0,  NULL,                NULL,           NULL             },
@@ -130,35 +220,53 @@ typedef struct
     int                filter_id;
     hb_filter_param_t *presets;
     hb_filter_param_t *tunes;
-    int                count;
+    int                preset_count;
+    int                tune_count;
 } filter_param_map_t;
 
 static filter_param_map_t param_map[] =
 {
     { HB_FILTER_NLMEANS,     nlmeans_presets,     nlmeans_tunes,
-      sizeof(nlmeans_presets) / sizeof(hb_filter_param_t)        },
+      sizeof(nlmeans_presets) / sizeof(hb_filter_param_t),
+      sizeof(nlmeans_tunes)   / sizeof(hb_filter_param_t),        },
 
     { HB_FILTER_HQDN3D,      hqdn3d_presets,      NULL,
-      sizeof(hqdn3d_presets) / sizeof(hb_filter_param_t)         },
+      sizeof(hqdn3d_presets) / sizeof(hb_filter_param_t),      0, },
+
+    { HB_FILTER_CHROMA_SMOOTH, chroma_smooth_presets, chroma_smooth_tunes,
+      sizeof(chroma_smooth_presets) / sizeof(hb_filter_param_t),
+      sizeof(chroma_smooth_tunes)   / sizeof(hb_filter_param_t),  },
+
+    { HB_FILTER_UNSHARP,     unsharp_presets,     unsharp_tunes,
+      sizeof(unsharp_presets) / sizeof(hb_filter_param_t),
+      sizeof(unsharp_tunes)   / sizeof(hb_filter_param_t),        },
+
+    { HB_FILTER_LAPSHARP,    lapsharp_presets,    lapsharp_tunes,
+      sizeof(lapsharp_presets) / sizeof(hb_filter_param_t),
+      sizeof(lapsharp_tunes)   / sizeof(hb_filter_param_t),       },
 
     { HB_FILTER_DETELECINE,  detelecine_presets,  NULL,
-      sizeof(detelecine_presets) / sizeof(hb_filter_param_t)     },
+      sizeof(detelecine_presets) / sizeof(hb_filter_param_t),  0, },
 
     { HB_FILTER_COMB_DETECT, comb_detect_presets, NULL,
-      sizeof(decomb_presets) / sizeof(hb_filter_param_t)         },
+      sizeof(decomb_presets) / sizeof(hb_filter_param_t),      0, },
 
     { HB_FILTER_DECOMB,      decomb_presets,      NULL,
-      sizeof(decomb_presets) / sizeof(hb_filter_param_t)         },
+      sizeof(decomb_presets) / sizeof(hb_filter_param_t),      0, },
 
     { HB_FILTER_DEINTERLACE, deinterlace_presets, NULL,
-      sizeof(deinterlace_presets) / sizeof(hb_filter_param_t)    },
+      sizeof(deinterlace_presets) / sizeof(hb_filter_param_t), 0, },
 
-    { HB_FILTER_INVALID,     NULL,                NULL,  0       }
+    { HB_FILTER_DEBLOCK, deblock_presets, deblock_tunes,
+      sizeof(deblock_presets) / sizeof(hb_filter_param_t),
+      sizeof(deblock_tunes)   / sizeof(hb_filter_param_t),        },
+
+    { HB_FILTER_INVALID,     NULL,                NULL,     0, 0, },
 };
 
 void hb_param_configure_qsv(void)
 {
-#ifdef USE_QSV
+#if HB_PROJECT_FEATURE_QSV
     if (!hb_qsv_available())
     {
         memset(&deinterlace_presets[4], 0, sizeof(hb_filter_param_t));
@@ -192,7 +300,7 @@ static hb_dict_t * generate_nlmeans_settings(const char *preset,
     if (preset == NULL)
         return NULL;
 
-    if (preset == NULL || !strcasecmp(preset, "custom"))
+    if (!strcasecmp(preset, "custom"))
     {
         return hb_parse_filter_settings(custom);
     }
@@ -408,6 +516,480 @@ static hb_dict_t * generate_nlmeans_settings(const char *preset,
     return settings;
 }
 
+static hb_dict_t * generate_chroma_smooth_settings(const char *preset,
+                                                   const char *tune,
+                                                   const char *custom)
+{
+    hb_dict_t * settings;
+
+    if (preset == NULL)
+        return NULL;
+
+    if (!strcasecmp(preset, "custom"))
+    {
+        return hb_parse_filter_settings(custom);
+    }
+    if (!strcasecmp(preset, "ultralight") ||
+        !strcasecmp(preset, "light") ||
+        !strcasecmp(preset, "medium") ||
+        !strcasecmp(preset, "strong") ||
+        !strcasecmp(preset, "stronger") ||
+        !strcasecmp(preset, "verystrong"))
+    {
+        double strength;
+        int    size;
+
+        // Strength
+        if ((tune == NULL || !strcasecmp(tune, "none")) ||
+           (!strcasecmp(tune, "tiny"))   ||
+           (!strcasecmp(tune, "small"))  ||
+           (!strcasecmp(tune, "medium")) ||
+           (!strcasecmp(tune, "wide"))   ||
+           (!strcasecmp(tune, "verywide")))
+        {
+            strength = 1.2;
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength = 0.4;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength = 0.8;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength = 1.6;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength = 2.0;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength = 2.4;
+            }
+        }
+        else
+        {
+            fprintf(stderr, "Unrecognized chroma smooth tune (%s).\n", tune);
+            return NULL;
+        }
+
+        // Size
+        if (tune == NULL || tune[0] == 0 ||
+            !strcasecmp(tune, "none") || !strcasecmp(tune, "medium"))
+        {
+            size = 7;
+        }
+        else if (!strcasecmp(tune, "tiny"))
+        {
+            size = 3;
+        }
+        else if (!strcasecmp(tune, "small"))
+        {
+            size = 5;
+        }
+        else if (!strcasecmp(tune, "wide"))
+        {
+            size = 9;
+        }
+        else if (!strcasecmp(tune, "verywide"))
+        {
+            size = 11;
+        }
+        else
+        {
+            fprintf(stderr, "Unrecognized chroma smooth tune (%s).\n", tune);
+            return NULL;
+        }
+
+        settings = hb_dict_init();
+        hb_dict_set(settings, "cb-strength", hb_value_double(strength));
+        hb_dict_set(settings, "cb-size",     hb_value_int(size));
+    }
+    else
+    {
+        settings = hb_parse_filter_settings(preset);
+        if (tune != NULL)
+        {
+            fprintf(stderr, "Custom chroma smooth parameters specified; ignoring chroma smooth tune (%s).\n", tune);
+        }
+    }
+
+    return settings;
+}
+
+static hb_dict_t * generate_unsharp_settings(const char *preset,
+                                             const char *tune,
+                                             const char *custom)
+{
+    hb_dict_t * settings;
+
+    if (preset == NULL)
+        return NULL;
+
+    if (!strcasecmp(preset, "custom"))
+    {
+        return hb_parse_filter_settings(custom);
+    }
+    if (!strcasecmp(preset, "ultralight") ||
+        !strcasecmp(preset, "light") ||
+        !strcasecmp(preset, "medium") ||
+        !strcasecmp(preset, "strong") ||
+        !strcasecmp(preset, "stronger") ||
+        !strcasecmp(preset, "verystrong"))
+    {
+        double strength[2];
+        int    size[2];
+
+        if (tune == NULL || !strcasecmp(tune, "none"))
+        {
+            strength[0]     = strength[1] = 0.25;
+            size[0]         =     size[1] = 7;
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength[0] = strength[1] = 0.05;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength[0] = strength[1] = 0.15;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength[0] = strength[1] = 0.5;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength[0] = strength[1] = 0.8;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength[0] = strength[1] = 1.2;
+            }
+        }
+        else if (!strcasecmp(tune, "ultrafine"))
+        {
+            strength[0]     = 0.4; strength[1] = 0.25;
+            size[0]         =      size[1]     = 3;
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength[0] = 0.15; strength[1] = 0.1;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength[0] = 0.25; strength[1] = 0.15;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength[0] = 0.8;  strength[1] = 0.5;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength[0] = 1.2;  strength[1] = 0.75;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength[0] = 1.5;  strength[1] = 0.9;
+            }
+        }
+        else if (!strcasecmp(tune, "fine"))
+        {
+            strength[0]     = 0.275; strength[1] = 0.165;
+            size[0]         = 7;     size[1]     = 5;
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength[0] = 0.055; strength[1] = 0.033;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength[0] = 0.165; strength[1] = 0.1;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength[0] = 0.55;  strength[1] = 0.33;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength[0] = 0.9;   strength[1] = 0.6;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength[0] = 1.35;   strength[1] = 0.9;
+            }
+        }
+        else if (!strcasecmp(tune, "medium"))
+        {
+            strength[0]     = 0.275; strength[1] = 0.165;
+            size[0]         = 9;     size[1]     = 7;
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength[0] = 0.055; strength[1] = 0.033;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength[0] = 0.165; strength[1] = 0.1;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength[0] = 0.55;  strength[1] = 0.33;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength[0] = 0.9;   strength[1] = 0.6;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength[0] = 1.35;   strength[1] = 0.9;
+            }
+        }
+        else if (!strcasecmp(tune, "coarse"))
+        {
+            strength[0]     = 0.275; strength[1] = 0.165;
+            size[0]         = 11;    size[1]     = 7;
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength[0] = 0.055; strength[1] = 0.033;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength[0] = 0.165; strength[1] = 0.1;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength[0] = 0.55;  strength[1] = 0.33;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength[0] = 0.9;   strength[1] = 0.6;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength[0] = 1.35;   strength[1] = 0.9;
+            }
+        }
+        else if (!strcasecmp(tune, "verycoarse"))
+        {
+            strength[0]     = 0.275; strength[1] = 0.165;
+            size[0]         = 13;    size[1]     = 9;
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength[0] = 0.055; strength[1] = 0.033;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength[0] = 0.165; strength[1] = 0.1;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength[0] = 0.55;  strength[1] = 0.33;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength[0] = 0.9;   strength[1] = 0.6;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength[0] = 1.35;   strength[1] = 0.9;
+            }
+        }
+        else
+        {
+            fprintf(stderr, "Unrecognized unsharp tune (%s).\n", tune);
+            return NULL;
+        }
+
+        settings = hb_dict_init();
+        hb_dict_set(settings, "y-strength", hb_value_double(strength[0]));
+        hb_dict_set(settings, "y-size",     hb_value_int(size[0]));
+
+        hb_dict_set(settings, "cb-strength", hb_value_double(strength[1]));
+        hb_dict_set(settings, "cb-size",     hb_value_int(size[1]));
+    }
+    else
+    {
+        settings = hb_parse_filter_settings(preset);
+        if (tune != NULL)
+        {
+            fprintf(stderr, "Custom unsharp parameters specified; ignoring unsharp tune (%s).\n", tune);
+        }
+    }
+
+    return settings;
+}
+
+static hb_dict_t * generate_lapsharp_settings(const char *preset,
+                                              const char *tune,
+                                              const char *custom)
+{
+    hb_dict_t * settings;
+
+    if (preset == NULL)
+        return NULL;
+
+    if (!strcasecmp(preset, "custom"))
+    {
+        return hb_parse_filter_settings(custom);
+    }
+    if (!strcasecmp(preset, "ultralight") ||
+        !strcasecmp(preset, "light") ||
+        !strcasecmp(preset, "medium") ||
+        !strcasecmp(preset, "strong") ||
+        !strcasecmp(preset, "stronger") ||
+        !strcasecmp(preset, "verystrong"))
+    {
+        double strength[2];
+        const char *kernel_string[2];
+
+        if (tune == NULL || !strcasecmp(tune, "none"))
+        {
+            strength[0]      = strength[1]      = 0.2;
+            kernel_string[0] = kernel_string[1] = "isolap";
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength[0]  = strength[1] = 0.05;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength[0]  = strength[1] = 0.1;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength[0]  = strength[1] = 0.3;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength[0]  = strength[1] = 0.5;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength[0]  = strength[1] = 1.1;
+            }
+        }
+        else if (!strcasecmp(tune, "film"))
+        {
+            strength[0]      = 0.2;  strength[1] = 0.12;
+            kernel_string[0] = kernel_string[1]  = "isolap";
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength[0]  = 0.05; strength[1] = 0.03;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength[0]  = 0.1;  strength[1] = 0.06;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength[0]  = 0.3;  strength[1] = 0.2;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength[0]  = 0.5;  strength[1] = 0.3;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength[0]  = 1.1;  strength[1] = 0.65;
+            }
+        }
+        else if (!strcasecmp(tune, "grain"))
+        {
+            strength[0]      = 0.2; strength[1] = 0.1;
+            kernel_string[0] = kernel_string[1] = "isolog";
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength[0] = 0.05; strength[1] = 0.025;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength[0] = 0.1;  strength[1] = 0.05;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength[0] = 0.3;  strength[1] = 0.15;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength[0] = 0.5;  strength[1] = 0.25;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength[0] = 1.1;  strength[1] = 0.55;
+            }
+        }
+        else if (!strcasecmp(tune, "animation"))
+        {
+            strength[0]      = 0.15; strength[1]   = 0.09;
+            kernel_string[0] = kernel_string[1]    = "isolap";
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength[0]  = 0.0375; strength[1] = 0.0225;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength[0]  = 0.075;  strength[1] = 0.05625;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength[0]  = 0.225;  strength[1] = 0.15;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength[0]  = 0.375;  strength[1] = 0.225;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength[0]  = 0.75;  strength[1] = 0.45;
+            }
+        }
+        else if (!strcasecmp(tune, "sprite"))
+        {
+            strength[0]      = strength[1]      = 0.15;
+            kernel_string[0] = kernel_string[1] = "lap";
+            if (!strcasecmp(preset, "ultralight"))
+            {
+                strength[0]  = strength[1]      = 0.0375;
+            }
+            else if (!strcasecmp(preset, "light"))
+            {
+                strength[0]  = strength[1]      = 0.075;
+            }
+            else if (!strcasecmp(preset, "strong"))
+            {
+                strength[0]  = strength[1]      = 0.225;
+            }
+            else if (!strcasecmp(preset, "stronger"))
+            {
+                strength[0]  = strength[1]      = 0.375;
+            }
+            else if (!strcasecmp(preset, "verystrong"))
+            {
+                strength[0]  = strength[1]      = 0.75;
+            }
+        }
+        else
+        {
+            fprintf(stderr, "Unrecognized lapsharp tune (%s).\n", tune);
+            return NULL;
+        }
+
+        settings = hb_dict_init();
+        hb_dict_set(settings, "y-strength", hb_value_double(strength[0]));
+        hb_dict_set(settings, "y-kernel",   hb_value_string(kernel_string[0]));
+
+        hb_dict_set(settings, "cb-strength", hb_value_double(strength[1]));
+        hb_dict_set(settings, "cb-kernel",   hb_value_string(kernel_string[1]));
+    }
+    else
+    {
+        settings = hb_parse_filter_settings(preset);
+        if (tune != NULL)
+        {
+            fprintf(stderr, "Custom lapsharp parameters specified; ignoring lapsharp tune (%s).\n", tune);
+        }
+    }
+
+    return settings;
+}
+
 int hb_validate_param_string(const char *regex_pattern, const char *param_string)
 {
     regex_t regex_temp;
@@ -523,7 +1105,7 @@ filter_param_get_presets_internal(int filter_id, int *count)
         {
             if (count != NULL)
             {
-                *count = param_map[ii].count;
+                *count = param_map[ii].preset_count;
             }
             return param_map[ii].presets;
         }
@@ -546,7 +1128,7 @@ filter_param_get_tunes_internal(int filter_id, int *count)
         {
             if (count != NULL)
             {
-                *count = param_map[ii].count;
+                *count = param_map[ii].tune_count;
             }
             return param_map[ii].tunes;
         }
@@ -573,42 +1155,44 @@ filter_param_get_entry(hb_filter_param_t *table, const char *name, int count)
     return NULL;
 }
 
-static hb_dict_t *
-generate_generic_settings(int filter_id, const char *preset, const char *custom)
+static hb_value_t *
+generate_generic_settings(int filter_id, const char * preset,
+                          const char * tune, const char * custom)
 {
-    int preset_count;
-    hb_filter_param_t *preset_table;
-    hb_filter_param_t *preset_entry;
-
-    if (preset == NULL || !strcasecmp(preset, "custom"))
+    if ((preset == NULL || !strcasecmp(preset, "custom")))
     {
         return hb_parse_filter_settings(custom);
     }
 
-    preset_table = filter_param_get_presets_internal(filter_id, &preset_count);
-    preset_entry = filter_param_get_entry(preset_table, preset, preset_count);
-    if (preset_entry != NULL && preset_entry->settings != NULL)
-    {
-        return hb_parse_filter_settings(preset_entry->settings);
-    }
-    return NULL;
-}
+    int count;
+    hb_filter_param_t *table;
+    hb_filter_param_t *entry;
 
-static hb_value_t *
-generate_deblock_settings(const char * preset, const char * custom)
-{
-    hb_dict_t * settings = NULL;
+    hb_value_t * settings = NULL, * tune_settings = NULL;
 
-    // Deblock "presets" are just the QP value.  0 disables.
-    if ((preset == NULL || !strcasecmp(preset, "custom")))
+    table = filter_param_get_presets_internal(filter_id, &count);
+    entry = filter_param_get_entry(table, preset, count);
+    if (entry != NULL && entry->settings != NULL)
     {
-        settings = hb_parse_filter_settings(custom);
-    }
-    else
-    {
-        settings = hb_dict_init();
-        int qp = strtol(preset, NULL, 0);
-        hb_dict_set(settings, "qp", hb_value_int(qp));
+        settings = hb_parse_filter_settings(entry->settings);
+        if (settings == NULL)
+        {
+            return NULL;
+        }
+
+        table = filter_param_get_tunes_internal(filter_id, &count);
+        entry = filter_param_get_entry(table, tune, count);
+        if (entry != NULL && entry->settings != NULL)
+        {
+            tune_settings = hb_parse_filter_settings(entry->settings);
+            if (tune_settings == NULL)
+            {
+                hb_value_free(&settings);
+                return NULL;
+            }
+            hb_dict_merge(settings, tune_settings);
+            hb_value_free(&tune_settings);
+        }
     }
 
     return settings;
@@ -630,11 +1214,6 @@ static void check_filter_status(int filter_id, hb_value_t *settings)
             int hflip = hb_dict_get_int(settings, "hflip");
             disable = angle == 0 && hflip == 0;
         } break;
-        case HB_FILTER_DEBLOCK:
-        {
-            int qp = hb_dict_get_int(settings, "qp");
-            disable = qp < 5;
-        } break;
         default:
         {
         } break;
@@ -653,9 +1232,6 @@ hb_generate_filter_settings(int filter_id, const char *preset, const char *tune,
 
     switch (filter_id)
     {
-        case HB_FILTER_DEBLOCK:
-            settings = generate_deblock_settings(preset, custom);
-            break;
         case HB_FILTER_PAD:
         case HB_FILTER_ROTATE:
         case HB_FILTER_CROP_SCALE:
@@ -663,17 +1239,29 @@ hb_generate_filter_settings(int filter_id, const char *preset, const char *tune,
         case HB_FILTER_RENDER_SUB:
         case HB_FILTER_GRAYSCALE:
         case HB_FILTER_QSV:
+        case HB_FILTER_COLORSPACE:
             settings = hb_parse_filter_settings(custom);
             break;
         case HB_FILTER_NLMEANS:
             settings = generate_nlmeans_settings(preset, tune, custom);
             break;
+        case HB_FILTER_CHROMA_SMOOTH:
+            settings = generate_chroma_smooth_settings(preset, tune, custom);
+            break;
+        case HB_FILTER_LAPSHARP:
+            settings = generate_lapsharp_settings(preset, tune, custom);
+            break;
+        case HB_FILTER_UNSHARP:
+            settings = generate_unsharp_settings(preset, tune, custom);
+            break;
+        case HB_FILTER_DEBLOCK:
         case HB_FILTER_COMB_DETECT:
         case HB_FILTER_DECOMB:
         case HB_FILTER_DETELECINE:
         case HB_FILTER_HQDN3D:
         case HB_FILTER_DEINTERLACE:
-            settings = generate_generic_settings(filter_id, preset, custom);
+            settings = generate_generic_settings(filter_id, preset,
+                                                 tune, custom);
             break;
         default:
             fprintf(stderr,
@@ -725,7 +1313,7 @@ int
 hb_validate_filter_preset(int filter_id, const char *preset, const char *tune,
                           const char *custom)
 {
-    if (preset == NULL && tune == NULL)
+    if (preset == NULL)
         return 1;
 
     int preset_count, tune_count;

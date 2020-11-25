@@ -1,6 +1,6 @@
 /* dectx3gsub.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
@@ -19,8 +19,8 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include "hb.h"
-#include "colormap.h"
+#include "handbrake/handbrake.h"
+#include "handbrake/colormap.h"
 
 struct hb_work_private_s
 {
@@ -251,7 +251,7 @@ static int dectx3gInit( hb_work_object_t * w, hb_job_t * job )
     // For now we just create a generic SSA Script Info.
     int height = job->title->geometry.height - job->crop[0] - job->crop[1];
     int width = job->title->geometry.width - job->crop[2] - job->crop[3];
-    hb_subtitle_add_ssa_header(w->subtitle, "Arial",
+    hb_subtitle_add_ssa_header(w->subtitle, HB_FONT_SANS,
                                .066 * job->title->geometry.height,
                                width, height);
 

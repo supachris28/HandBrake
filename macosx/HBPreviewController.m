@@ -6,13 +6,12 @@
 
 #import "HBPreviewController.h"
 #import "HBPreviewGenerator.h"
-#import "HBPictureController.h"
+#import "HBCroppingController.h"
 
 #import "HBController.h"
 #import "HBPreviewView.h"
 
 #import "HBPlayer.h"
-#import "HBQTKitPlayer.h"
 #import "HBAVPlayer.h"
 
 #import "HBPictureHUDController.h"
@@ -28,7 +27,7 @@
 #define MIN_WIDTH 480.0
 #define MIN_HEIGHT 360.0
 
-@interface HBPreviewController () <HBPreviewGeneratorDelegate, HBPictureHUDControllerDelegate, HBEncodingProgressHUDControllerDelegate, HBPlayerHUDControllerDelegate>
+@interface HBPreviewController () <NSMenuItemValidation, HBPreviewGeneratorDelegate, HBPictureHUDControllerDelegate, HBEncodingProgressHUDControllerDelegate, HBPlayerHUDControllerDelegate>
 
 @property (nonatomic, readonly) HBPictureHUDController *pictureHUD;
 @property (nonatomic, readonly) HBEncodingProgressHUDController *encodingHUD;
@@ -41,10 +40,10 @@
 
 @property (nonatomic) id<HBPlayer> player;
 
-@property (nonatomic) HBPictureController *pictureSettingsWindow;
+@property (nonatomic) NSPopover *croppingPopover;
 
 @property (nonatomic) NSPoint windowCenterPoint;
-@property (weak) IBOutlet HBPreviewView *previewView;
+@property (nonatomic, weak) IBOutlet HBPreviewView *previewView;
 
 @end
 
@@ -64,12 +63,12 @@
     // We need the center and we can't use the
     // standard NSWindow autosave because we change
     // the window size at startup.
-    NSString *centerString = [[NSUserDefaults standardUserDefaults] objectForKey:@"HBPreviewWindowCenter"];
+    NSString *centerString = [NSUserDefaults.standardUserDefaults stringForKey:@"HBPreviewWindowCenter"];
     if (centerString.length)
     {
         NSPoint center = NSPointFromString(centerString);
         self.windowCenterPoint = center;
-        [self.window HB_resizeToBestSizeForViewSize:NSMakeSize(MIN_WIDTH, MIN_HEIGHT) center:self.windowCenterPoint animate:NO];
+        [self.window HB_resizeToBestSizeForViewSize:NSMakeSize(MIN_WIDTH, MIN_HEIGHT) keepInScreenRect:YES centerPoint:center animate:NO];
     }
     else
     {
@@ -144,7 +143,8 @@
 - (void)setPicture:(HBPicture *)picture
 {
     _picture = picture;
-    self.pictureSettingsWindow.picture = _picture;
+    [self.croppingPopover close];
+    self.croppingPopover = nil;
 }
 
 - (void)setGenerator:(HBPreviewGenerator *)generator
@@ -160,16 +160,21 @@
     if (generator)
     {
         generator.delegate = self;
-
-        // adjust the preview slider length
-        self.pictureHUD.pictureCount = generator.imagesCount;
+        self.pictureHUD.generator = generator;
     }
     else
     {
         self.previewView.image = nil;
-        self.window.title = NSLocalizedString(@"Preview", nil);
+        self.window.title = NSLocalizedString(@"Preview", @"Preview -> window title");
+        self.pictureHUD.generator = nil;
     }
+
     [self switchStateToHUD:self.pictureHUD];
+
+    if (generator)
+    {
+        [self resizeToOptimalSize];
+    }
 }
 
 - (void)reloadPreviews
@@ -178,6 +183,7 @@
     {
         [self.generator cancel];
         [self switchStateToHUD:self.pictureHUD];
+        [self resizeToOptimalSize];
     }
 }
 
@@ -202,8 +208,31 @@
         [self.player pause];
     }
 
-    [self.pictureSettingsWindow close];
     [self.generator purgeImageCache];
+}
+
+#pragma mark - Window sizing
+
+- (void)resizeToOptimalSize
+{
+    if (!(self.window.styleMask & NSWindowStyleMaskFullScreen))
+    {
+        if (self.previewView.fitToView)
+        {
+            [self.window setFrame:self.window.screen.visibleFrame display:YES animate:YES];
+        }
+        else
+        {
+            // Get the optimal view size for the image
+            NSSize windowSize = [self.previewView optimalViewSizeForImageSize:self.generator.imageSize
+                                                                      minSize:NSMakeSize(MIN_WIDTH, MIN_HEIGHT)
+                                                                  scaleFactor:self.window.backingScaleFactor];
+            // Scale the window to the image size
+            [self.window HB_resizeToBestSizeForViewSize:windowSize keepInScreenRect:YES centerPoint:NSZeroPoint animate:self.window.isVisible];
+        }
+    }
+
+    [self updateSizeLabels];
 }
 
 - (void)windowDidChangeBackingProperties:(NSNotification *)notification
@@ -211,15 +240,14 @@
     NSWindow *theWindow = (NSWindow *)notification.object;
 
     CGFloat newBackingScaleFactor = theWindow.backingScaleFactor;
-    CGFloat oldBackingScaleFactor = [notification.userInfo[@"NSBackingPropertyOldScaleFactorKey"] doubleValue];
+    CGFloat oldBackingScaleFactor = [notification.userInfo[NSBackingPropertyOldScaleFactorKey] doubleValue];
 
     if (newBackingScaleFactor != oldBackingScaleFactor)
     {
-        // Scale factor changed, update the preview window
-        // to the new situation
+        // Scale factor changed, resize the preview window
         if (self.generator)
         {
-            [self reloadPreviews];
+            [self resizeToOptimalSize];
         }
     }
 }
@@ -231,13 +259,20 @@
     if (self.previewView.fitToView == NO)
     {
         self.windowCenterPoint = [self.window HB_centerPoint];
-        [[NSUserDefaults standardUserDefaults] setObject:NSStringFromPoint(self.windowCenterPoint) forKey:@"HBPreviewWindowCenter"];
+        [NSUserDefaults.standardUserDefaults setObject:NSStringFromPoint(self.windowCenterPoint) forKey:@"HBPreviewWindowCenter"];
     }
 }
 
 - (void)windowDidResize:(NSNotification *)notification
 {
     [self updateSizeLabels];
+    if (self.currentHUD == self.playerHUD)
+    {
+        [CATransaction begin];
+        CATransaction.disableActions = YES;
+        self.player.layer.frame = self.previewView.pictureFrame;
+        [CATransaction commit];
+    }
 }
 
 - (void)updateSizeLabels
@@ -249,16 +284,16 @@
         NSMutableString *scaleString = [NSMutableString string];
         if (scale * 100.0 != 100)
         {
-            [scaleString appendFormat:NSLocalizedString(@"(%.0f%% actual size)", nil), scale * 100.0];
+            [scaleString appendFormat:NSLocalizedString(@"(%.0f%% actual size)", @"Preview -> size info label"), floor(scale * 100.0)];
         }
         else
         {
-            [scaleString appendString:NSLocalizedString(@"(Actual size)", nil)];
+            [scaleString appendString:NSLocalizedString(@"(Actual size)", @"Preview -> size info label")];
         }
 
         if (self.previewView.fitToView == YES)
         {
-            [scaleString appendString:NSLocalizedString(@" Scaled To Screen", nil)];
+            [scaleString appendString:NSLocalizedString(@" Scaled To Screen", @"Preview -> size info label")];
         }
 
         // Set the info fields in the hud controller
@@ -266,9 +301,15 @@
         self.pictureHUD.scale = scaleString;
 
         // Set the info field in the window title bar
-        self.window.title = [NSString stringWithFormat:NSLocalizedString(@"Preview - %@ %@", nil),
+        self.window.title = [NSString stringWithFormat:NSLocalizedString(@"Preview - %@ %@", @"Preview -> window title format"),
                              self.generator.info, scaleString];
     }
+}
+
+- (void)toggleScaleToScreen
+{
+    self.previewView.fitToView = !self.previewView.fitToView;
+    [self resizeToOptimalSize];
 }
 
 #pragma mark - Hud State
@@ -299,16 +340,18 @@
     }
 
     // Show the current hud
-    NSMutableArray *huds = [@[self.pictureHUD, self.encodingHUD, self.playerHUD] mutableCopy];
+    NSMutableArray<NSViewController<HBHUD> *> *huds = [@[self.pictureHUD, self.encodingHUD, self.playerHUD] mutableCopy];
     [huds removeObject:hud];
-    for (NSViewController *controller in huds) {
+    for (NSViewController *controller in huds)
+    {
         controller.view.hidden = YES;
     }
+
     if (self.generator)
     {
         hud.view.hidden = NO;
         hud.view.layer.opacity = 1.0;
-    };
+    }
 
     [self.window makeFirstResponder:hud.view];
     [self startHudTimer];
@@ -433,64 +476,24 @@
     [self displayPreviewAtIndex:self.pictureHUD.selectedIndex];
 }
 
-/**
- * Adjusts the window to draw the current picture (fPicture) adjusting its size as
- * necessary to display as much of the picture as possible.
- */
 - (void)displayPreviewAtIndex:(NSUInteger)idx
 {
-    if (!self.generator)
+    if (self.generator && self.window.isVisible)
     {
-        return;
-    }
-
-    if (self.window.isVisible)
-    {
-        CGImageRef fPreviewImage = [self.generator copyImageAtIndex:idx shouldCache:YES];
-        [self.previewView setImage:fPreviewImage];
-        CFRelease(fPreviewImage);
-    }
-
-    if (self.previewView.fitToView == NO && !(self.window.styleMask & NSFullScreenWindowMask))
-    {
-        // Get the optimal view size for the image
-        NSSize imageScaledSize = [self.generator imageSize];
-
-        // Scale the window to the image size
-        NSSize windowSize = [self.previewView optimalViewSizeForImageSize:imageScaledSize minSize:NSMakeSize(MIN_WIDTH, MIN_HEIGHT)];
-        [self.window HB_resizeToBestSizeForViewSize:windowSize center:self.windowCenterPoint animate:self.window.isVisible];
-    }
-
-    [self updateSizeLabels];
-}
-
-- (void)toggleScaleToScreen
-{
-    if (self.previewView.fitToView == YES)
-    {
-        self.previewView.fitToView = NO;
-        [self displayPreviewAtIndex:self.pictureHUD.selectedIndex];
-    }
-    else
-    {
-        self.previewView.fitToView = YES;
-        if (!(self.window.styleMask & NSFullScreenWindowMask))
-        {
-            [self.window setFrame:self.window.screen.visibleFrame display:YES animate:YES];
-        }
+        CGImageRef image = [self.generator copyImageAtIndex:idx shouldCache:YES];
+        self.previewView.image = image;
+        CFRelease(image);
     }
 }
 
-- (void)showPictureSettings
+- (void)showCroppingSettings:(id)sender
 {
-    if (self.pictureSettingsWindow == nil)
-    {
-        self.pictureSettingsWindow = [[HBPictureController alloc] init];
-        self.pictureSettingsWindow.previewController = self;
-    }
-
-    self.pictureSettingsWindow.picture = self.picture;
-    [self.pictureSettingsWindow showWindow:self];
+    HBCroppingController *croppingController = [[HBCroppingController alloc] initWithPicture:self.picture];
+    self.croppingPopover = [[NSPopover alloc] init];
+    self.croppingPopover.behavior = NSPopoverBehaviorTransient;
+    self.croppingPopover.contentViewController = croppingController;
+    self.croppingPopover.appearance = [NSAppearance appearanceNamed:NSAppearanceNameVibrantDark];
+    [self.croppingPopover showRelativeToRect:[sender bounds] ofView:sender preferredEdge:NSMaxYEdge];
 }
 
 #pragma mark - Encoding mode
@@ -524,35 +527,26 @@
     [self switchStateToHUD:self.pictureHUD];
 }
 
-- (void)showAlert:(NSURL *)fileURL;
+- (void)showAlert:(NSURL *)fileURL
 {
-    NSAlert *alert = [NSAlert alertWithMessageText:NSLocalizedString(@"HandBrake can't open the preview.", nil)
-                                     defaultButton:NSLocalizedString(@"Open in external player", nil)
-                                   alternateButton:NSLocalizedString(@"Cancel", nil)
-                                       otherButton:nil
-                         informativeTextWithFormat:NSLocalizedString(@"HandBrake can't playback this combination of video/audio/container format. Do you want to open it in an external player?", nil)];
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = NSLocalizedString(@"HandBrake can't open the preview.", @"Preview -> live preview alert message");
+    alert.informativeText = NSLocalizedString(@"HandBrake can't playback this combination of video/audio/container format. Do you want to open it in an external player?", @"Preview -> live preview alert informative text");
+    [alert addButtonWithTitle:NSLocalizedString(@"Open in external player", @"Preview -> live preview alert default button")];
+    [alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"Preview -> live preview alert alternate button")];
 
-    [alert beginSheetModalForWindow:self.window modalDelegate:self didEndSelector:@selector(alertDidEnd:returnCode:contextInfo:) contextInfo:(void *)CFBridgingRetain(fileURL)];
-}
-
-- (void)alertDidEnd:(NSAlert *)alert
-         returnCode:(NSInteger)returnCode
-        contextInfo:(void *)contextInfo
-{
-    NSURL *fileURL = CFBridgingRelease(contextInfo);
-    if (returnCode == NSModalResponseOK)
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse returnCode)
     {
-        [[NSWorkspace sharedWorkspace] openURL:fileURL];
-    }
+        if (returnCode == NSAlertFirstButtonReturn)
+        {
+            [[NSWorkspace sharedWorkspace] openURL:fileURL];
+        }
+    }];
 }
 
-- (void)setUpPlaybackOfURL:(NSURL *)fileURL playerClass:(Class)class;
+- (void)setUpPlaybackOfURL:(NSURL *)fileURL playerClass:(Class)class
 {
-#if __HB_QTKIT_PLAYER_AVAILABLE
-    NSArray<Class> *availablePlayerClasses = @[[HBAVPlayer class], [HBQTKitPlayer class]];
-#else
     NSArray<Class> *availablePlayerClasses = @[[HBAVPlayer class]];
-#endif
 
     self.player = [[class alloc] initWithURL:fileURL];
 
@@ -604,8 +598,7 @@
     CALayer *playerLayer = self.player.layer;
     playerLayer.frame = self.previewView.pictureFrame;
 
-    [self.window.contentView.layer insertSublayer:playerLayer atIndex:1];
-
+    [self.previewView.layer insertSublayer:playerLayer atIndex:10];
     self.playerHUD.player = self.player;
 }
 
@@ -626,7 +619,7 @@
 
 - (void)keyDown:(NSEvent *)event
 {
-    if ([self.currentHUD HB_keyDown:event] == NO)
+    if (self.generator && [self.currentHUD HB_keyDown:event] == NO)
     {
         [super keyDown:event];
     }
@@ -634,7 +627,7 @@
 
 - (void)scrollWheel:(NSEvent *)event
 {
-    if ([self.currentHUD HB_scrollWheel:event] == NO)
+    if (self.generator && [self.currentHUD HB_scrollWheel:event] == NO)
     {
         [super scrollWheel:event];
     }

@@ -12,61 +12,68 @@ namespace HandBrakeWPF.Helpers
     using System;
     using System.Collections.Generic;
     using System.Diagnostics;
-    using System.Globalization;
     using System.IO;
     using System.Linq;
     using System.Text.RegularExpressions;
     using System.Windows;
-    using System.Xml.Serialization;
 
-    using HandBrake.ApplicationServices.Model;
-    using HandBrake.ApplicationServices.Utilities;
+    using HandBrake.Interop.Utilities;
 
     using HandBrakeWPF.Services.Interfaces;
     using HandBrakeWPF.Services.Queue.Model;
     using HandBrakeWPF.Utilities;
 
-    using IQueueProcessor = HandBrakeWPF.Services.Queue.Interfaces.IQueueProcessor;
+    using Newtonsoft.Json;
 
-    /// <summary>
-    /// Queue Recovery Helper
-    /// </summary>
+    using IQueueService = HandBrakeWPF.Services.Queue.Interfaces.IQueueService;
+
     public class QueueRecoveryHelper
     {
+        public static string QueueFileName = "hb_queue";
+
         /// <summary>
         /// Check if the queue recovery file contains records.
         /// If it does, it means the last queue did not complete before HandBrake closed.
         /// So, return a boolean if true. 
         /// </summary>
+        /// <param name="filterQueueFiles">
+        /// The filter Queue Files.
+        /// </param>
         /// <returns>
         /// True if there is a queue to recover.
         /// </returns>
-        public static List<string> CheckQueueRecovery()
+        public static List<string> CheckQueueRecovery(List<string> filterQueueFiles)
         {
             try
             {
-                string tempPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"HandBrake\");
-                List<string> queueFiles = new List<string>();
-                DirectoryInfo info = new DirectoryInfo(tempPath);
-                IEnumerable<FileInfo> logFiles = info.GetFiles("*.xml").Where(f => f.Name.StartsWith("hb_queue_recovery"));
+                // Check for any Corrupted Backup Files and try recover them
+                RecoverFromBackupFailure();
 
-                if (!logFiles.Any())
+                // Now check for all available recovery files. (There may be more than 1 for multi-instance support)
+                string tempPath = DirectoryUtilities.GetUserStoragePath(VersionHelper.IsNightly());
+                DirectoryInfo info = new DirectoryInfo(tempPath);
+                IEnumerable<FileInfo> foundFiles = info.GetFiles("*.json").Where(f => f.Name.StartsWith(QueueFileName));
+                var queueFiles = GetFilesExcludingActiveProcesses(foundFiles, filterQueueFiles);
+
+                if (!queueFiles.Any())
                 {
                     return queueFiles;
-                }
+                }        
 
                 List<string> removeFiles = new List<string>();
-                XmlSerializer Ser = new XmlSerializer(typeof(List<QueueTask>));
-                foreach (FileInfo file in logFiles)
+                List<string> acceptedFiles = new List<string>();
+
+
+                foreach (string file in queueFiles)
                 {
                     try
                     {
-                        using (FileStream strm = new FileStream(file.FullName, FileMode.Open, FileAccess.Read))
+                        using (StreamReader stream = new StreamReader(file))
                         {
-                            List<QueueTask> list = Ser.Deserialize(strm) as List<QueueTask>;
+                            List<QueueTask> list = list = JsonConvert.DeserializeObject<List<QueueTask>>(stream.ReadToEnd());
                             if (list != null && list.Count == 0)
                             {
-                                removeFiles.Add(file.FullName);
+                                removeFiles.Add(file);
                             }
 
                             if (list != null && list.Count != 0)
@@ -74,7 +81,11 @@ namespace HandBrakeWPF.Helpers
                                 List<QueueTask> tasks = list.Where(l => l.Status != QueueItemStatus.Completed).ToList();
                                 if (tasks.Count != 0)
                                 {
-                                    queueFiles.Add(file.Name);
+                                    acceptedFiles.Add(Path.GetFileName(file));
+                                }
+                                else
+                                {
+                                    removeFiles.Add(file);
                                 }
                             }
                         }
@@ -85,23 +96,9 @@ namespace HandBrakeWPF.Helpers
                     }
                 }
 
-                // Cleanup old/unused queue files for now.
-                foreach (string file in removeFiles)
-                {
-                    Match m = Regex.Match(file, @"([0-9]+).xml");
-                    if (m.Success)
-                    {
-                        int processId = int.Parse(m.Groups[1].ToString());
-                        if (GeneralUtilities.IsPidACurrentHandBrakeInstance(processId))
-                        {
-                            continue;
-                        }
-                    }
+                CleanupFiles(removeFiles, false);
 
-                    File.Delete(file);
-                }
-
-                return queueFiles;
+                return acceptedFiles;
             }
             catch (Exception exc)
             {
@@ -122,13 +119,16 @@ namespace HandBrakeWPF.Helpers
         /// <param name="silentRecovery">
         /// The silent Recovery.
         /// </param>
+        /// <param name="queueFilter">
+        /// The queue Filter.
+        /// </param>
         /// <returns>
         /// The <see cref="bool"/>.
         /// </returns>
-        public static bool RecoverQueue(IQueueProcessor encodeQueue, IErrorService errorService, bool silentRecovery)
+        public static bool RecoverQueue(IQueueService encodeQueue, IErrorService errorService, bool silentRecovery, List<string> queueFilter)
         {
-            string appDataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"HandBrake\");
-            List<string> queueFiles = CheckQueueRecovery();
+            string appDataPath = DirectoryUtilities.GetUserStoragePath(VersionHelper.IsNightly());
+            List<string> queueFiles = CheckQueueRecovery(queueFilter);
             MessageBoxResult result = MessageBoxResult.None;
             if (!silentRecovery)
             {
@@ -136,8 +136,8 @@ namespace HandBrakeWPF.Helpers
                 {
                     result =
                         errorService.ShowMessageBox(
-                            "HandBrake has detected unfinished items on the queue from the last time the application was launched. Would you like to recover these?",
-                            "Queue Recovery Possible",
+                            Properties.Resources.Queue_RecoverQueueQuestionSingular,
+                            Properties.Resources.Queue_RecoveryPossible,
                             MessageBoxButton.YesNo,
                             MessageBoxImage.Question);
                 }
@@ -145,8 +145,8 @@ namespace HandBrakeWPF.Helpers
                 {
                     result =
                         errorService.ShowMessageBox(
-                            "HandBrake has detected multiple unfinished queue files. These will be from multiple instances of HandBrake running. Would you like to recover all unfinished jobs?",
-                            "Queue Recovery Possible",
+                            Properties.Resources.Queue_RecoverQueueQuestionPlural,
+                            Properties.Resources.Queue_RecoveryPossible,
                             MessageBoxButton.YesNo,
                             MessageBoxImage.Question);
                 }
@@ -161,62 +161,142 @@ namespace HandBrakeWPF.Helpers
                 bool isRecovered = false;
                 foreach (string file in queueFiles)
                 {
-                    // Skip over the file if it belongs to another HandBrake instance.
-                    Match m = Regex.Match(file, @"([0-9]+).xml");
-                    if (m.Success)
-                    {
-                        int processId = int.Parse(m.Groups[1].ToString());
-                        if (processId != GeneralUtilities.ProcessId && GeneralUtilities.IsPidACurrentHandBrakeInstance(processId))
-                        {
-                            continue;
-                        }
-                    }
-
                     // Recover the Queue
-                    encodeQueue.RestoreQueue(appDataPath + file);
+                    encodeQueue.RestoreQueue(Path.Combine(appDataPath, file));
                     isRecovered = true;
 
                     // Cleanup
-                    if (!file.Contains(GeneralUtilities.ProcessId.ToString(CultureInfo.InvariantCulture)))
-                    {
-                        try
-                        {
-                            // Once we load it in, remove it as we no longer need it.
-                            File.Delete(Path.Combine(appDataPath, file));
-                        }
-                        catch (Exception)
-                        {
-                            // Keep quite, nothing much we can do if there are problems.
-                            // We will continue processing files.
-                        }
-                    }
+                    CleanupFiles(new List<string> { file }, false);                   
                 }
 
                 return isRecovered;
             }
-            else
+
+            CleanupFiles(queueFiles, true);
+            return false;
+        }
+
+        public static bool ArchivesExist()
+        {
+            string appDataPath = DirectoryUtilities.GetUserStoragePath(VersionHelper.IsNightly());
+            DirectoryInfo info = new DirectoryInfo(appDataPath);
+            IEnumerable<FileInfo> foundFiles = info.GetFiles("*.archive").Where(f => f.Name.StartsWith(QueueFileName));
+
+            return foundFiles.Any();
+        }
+
+        private static void RecoverFromBackupFailure()
+        {
+            string appDataPath = DirectoryUtilities.GetUserStoragePath(VersionHelper.IsNightly());
+            DirectoryInfo info = new DirectoryInfo(appDataPath);
+            IEnumerable<FileInfo> foundFiles = info.GetFiles("*.last");
+
+            foreach (FileInfo file in foundFiles)
             {
-                foreach (string file in queueFiles)
+                string corruptedFile = file.FullName.Replace(".last", string.Empty);
+                if (File.Exists(corruptedFile))
                 {
-                    if (File.Exists(Path.Combine(appDataPath, file)))
+                    File.Delete(corruptedFile);
+                }
+
+                File.Move(file.FullName, corruptedFile);
+            }
+        }
+
+        private static List<string> GetFilesExcludingActiveProcesses(IEnumerable<FileInfo> foundFiles, List<string> filterQueueFiles)
+        {
+            List<string> queueFiles = new List<string>();
+
+            // Remove any files where we have an active instnace.
+            foreach (FileInfo file in foundFiles)
+            {
+                string fileProcessId = file.Name.Replace(QueueFileName, string.Empty).Replace(".json", string.Empty);
+                int processId;
+                if (!string.IsNullOrEmpty(fileProcessId) && int.TryParse(fileProcessId, out processId))
+                {
+                    if (!GeneralUtilities.IsPidACurrentHandBrakeInstance(processId))
                     {
-                        // Check that the file doesn't belong to another running instance.
-                        Match m = Regex.Match(file, @"([0-9]+).xml");
-                        if (m.Success)
+                        if (filterQueueFiles != null && filterQueueFiles.Count > 0)
                         {
-                            int processId = int.Parse(m.Groups[1].ToString());
-                            if (GeneralUtilities.IsPidACurrentHandBrakeInstance(processId))
+                            if (filterQueueFiles.Contains(processId.ToString()))
                             {
-                                continue;
+                                queueFiles.Add(file.FullName);
                             }
                         }
+                        else
+                        {
+                            queueFiles.Add(file.FullName);
+                        }                       
+                    }
+                }
+            }
 
-                        // Delete it if it doesn't
-                        File.Delete(Path.Combine(appDataPath, file));
+            return queueFiles;
+        }
+
+        private static void CleanupFiles(List<string> removeFiles, bool archive)
+        {
+            string appDataPath = DirectoryUtilities.GetUserStoragePath(VersionHelper.IsNightly());
+
+            // Cleanup old/unused queue files for now.
+            foreach (string file in removeFiles)
+            {
+                Match m = Regex.Match(file, @"([0-9]+).json");
+                if (m.Success)
+                {
+                    int processId = int.Parse(m.Groups[1].ToString());
+                    if (GeneralUtilities.IsPidACurrentHandBrakeInstance(processId))
+                    {
+                        continue;
                     }
                 }
 
-                return false;
+                string fullPath = Path.Combine(appDataPath, file);
+
+                if (archive)
+                {
+                    File.Move(fullPath, fullPath + ".archive");
+                }
+                else
+                {
+                    File.Delete(fullPath);
+                }      
+            }
+
+            TidyArchiveFiles();
+        }
+
+        /// <summary>
+        /// Tidy up archive files older than 7 days.
+        /// Gives the user an opportunity to recover a queue file they accidentally chose not to import. 
+        /// </summary>
+        private static void TidyArchiveFiles()
+        {
+            string appDataPath = DirectoryUtilities.GetUserStoragePath(VersionHelper.IsNightly());
+            DirectoryInfo info = new DirectoryInfo(appDataPath);
+            IEnumerable<FileInfo> foundFiles = info.GetFiles("*.archive").Where(f => f.Name.StartsWith(QueueFileName));
+
+            DateTime lastWeek = DateTime.Now.AddDays(-7);
+
+            foreach (FileInfo file in foundFiles)
+            {
+                if (file.CreationTime < lastWeek)
+                {
+                    string fullPath = Path.Combine(appDataPath, file.Name);
+                    File.Delete(fullPath);
+                }
+            }
+        }
+
+        public static void ResetArchives()
+        {
+            string appDataPath = DirectoryUtilities.GetUserStoragePath(VersionHelper.IsNightly());
+            DirectoryInfo info = new DirectoryInfo(appDataPath);
+            IEnumerable<FileInfo> foundFiles = info.GetFiles("*.archive").Where(f => f.Name.StartsWith(QueueFileName));
+            foreach (FileInfo file in foundFiles)
+            {
+                string fullPath = Path.Combine(appDataPath, file.Name);
+                File.Move(fullPath, fullPath.Replace(".archive", string.Empty));
             }
         }
     }

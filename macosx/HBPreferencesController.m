@@ -4,10 +4,43 @@
  */
 
 #import "HBPreferencesController.h"
-#import "HBLanguagesSelection.h"
+
+NSString * const HBShowOpenPanelAtLaunch              = @"HBShowOpenPanelAtLaunch";
+NSString * const HBShowSummaryPreview                 = @"HBShowSummaryPreview";
+
+NSString * const HBLastDestinationDirectoryURL        = @"HBLastDestinationDirectoryURL";
+NSString * const HBLastDestinationDirectoryBookmark   = @"HBLastDestinationDirectoryBookmark";
+NSString * const HBLastSourceDirectoryURL             = @"HBLastSourceDirectoryURL";
+
+NSString * const HBDefaultMpegExtension          = @"DefaultMpegExtension";
+
+NSString * const HBAlertWhenDone                 = @"HBAlertWhenDone";
+NSString * const HBResetWhenDoneOnLaunch         = @"HBResetWhenDoneOnLaunch";
+NSString * const HBAlertWhenDoneSound            = @"HBAlertWhenDoneSound";
+NSString * const HBSendToAppEnabled              = @"HBSendToAppEnabled";
+NSString * const HBSendToApp                     = @"HBSendToApp";
+
+NSString * const HBDefaultAutoNaming             = @"DefaultAutoNaming";
+NSString * const HBAutoNamingFormat              = @"HBAutoNamingFormat";
+NSString * const HBAutoNamingRemoveUnderscore    = @"HBAutoNamingRemoveUnderscore";
+NSString * const HBAutoNamingRemovePunctuation   = @"HBAutoNamingRemovePunctuation";
+NSString * const HBAutoNamingTitleCase           = @"HBAutoNamingTitleCase";
+
+NSString * const HBCqSliderFractional            = @"HBx264CqSliderFractional";
+NSString * const HBUseDvdNav                     = @"UseDvdNav";
+NSString * const HBMinTitleScanSeconds           = @"MinTitleScanSeconds";
+NSString * const HBPreviewsNumber                = @"PreviewsNumber";
+
+NSString * const HBLoggingLevel                  = @"LoggingLevel";
+NSString * const HBEncodeLogLocation             = @"EncodeLogLocation";
+NSString * const HBClearOldLogs                  = @"HBClearOldLogs";
+
+NSString * const HBQueuePauseIfLowSpace          = @"HBQueuePauseIfLowSpace";
+NSString * const HBQueueMinFreeSpace             = @"HBQueueMinFreeSpace";
+NSString * const HBQueueAutoClearCompletedItems  = @"HBQueueAutoClearCompletedItems";
+NSString * const HBQueueWorkerCounts             = @"HBQueueWorkerCounts";
 
 #define TOOLBAR_GENERAL     @"TOOLBAR_GENERAL"
-#define TOOLBAR_AUDIO       @"TOOLBAR_AUDIO"
 #define TOOLBAR_ADVANCED    @"TOOLBAR_ADVANCED"
 
 /**
@@ -21,26 +54,16 @@
  * preference settings are added that cannot be handled with Cocoa bindings).
  */
 
-@interface HBPreferencesController () <NSTokenFieldDelegate>
+@interface HBPreferencesController () <NSTokenFieldDelegate, NSToolbarDelegate>
 {
-    IBOutlet NSView         * fGeneralView, * fAudioView, * fAdvancedView;
+    IBOutlet NSView         * fGeneralView, * fAdvancedView;
     IBOutlet NSTextField    * fSendEncodeToAppField;
 }
 
-/* Manage the send encode to xxx.app windows and field */
-- (IBAction) browseSendToApp: (id) sender;
-
-- (void) setPrefView: (id) sender;
-- (NSToolbarItem *)toolbarItemWithIdentifier: (NSString *)identifier
-                                       label: (NSString *)label
-                                       image: (NSImage *)image;
-
-@property (unsafe_unretained) IBOutlet NSTokenField *formatTokenField;
-@property (unsafe_unretained) IBOutlet NSTokenField *builtInTokenField;
+@property (nonatomic, unsafe_unretained) IBOutlet NSTokenField *formatTokenField;
+@property (nonatomic, unsafe_unretained) IBOutlet NSTokenField *builtInTokenField;
 @property (nonatomic, readonly, strong) NSArray *buildInFormatTokens;
 @property (nonatomic, strong) NSArray *matches;
-
-@property (nonatomic, strong) HBLanguagesSelection *languages;
 
 @end
 
@@ -54,36 +77,37 @@
  */
 + (void)registerUserDefaults
 {
-    NSString *desktopDirectory = [NSSearchPathForDirectoriesInDomains(NSDesktopDirectory, NSUserDomainMask, YES) firstObject];
-    NSURL *desktopURL = [NSURL fileURLWithPath:desktopDirectory isDirectory:YES];
+    NSString *moviesDirectory = [NSSearchPathForDirectoriesInDomains(NSMoviesDirectory, NSUserDomainMask, YES) firstObject];
+    NSURL *moviesURL = [NSURL fileURLWithPath:moviesDirectory isDirectory:YES];
 
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{
-        @"HBShowOpenPanelAtLaunch":         @YES,
-        @"DefaultLanguage":                 @"English",
-        @"DefaultMpegExtension":            @"Auto",
-        @"UseDvdNav":                       @"YES",
-        @"HBDefaultPresetsDrawerShow":      @YES,
-        // Archive the URL because they aren't supported in plist.
-        @"HBLastDestinationDirectory":      [NSKeyedArchiver archivedDataWithRootObject:desktopURL],
-        @"HBLastSourceDirectory":           [NSKeyedArchiver archivedDataWithRootObject:desktopURL],
-        @"DefaultAutoNaming":               @NO,
-        @"HBAlertWhenDone":                 @(HBDoneActionNotification),
-        @"AlertWhenDoneSound":              @"YES",
-        @"LoggingLevel":                    @"1",
-        @"HBClearOldLogs":                  @YES,
-        @"EncodeLogLocation":               @"NO",
-        @"MinTitleScanSeconds":             @"10",
-        @"PreviewsNumber":                  @"10",
-        @"x264CqSliderFractional":          @"0.50",
-        @"HBShowAdvancedTab":               @NO,
-        @"HBAutoNamingFormat":              @[@"{Source}", @" ", @"{Title}"],
-        @"HBDrawerSize":                    NSStringFromSize(NSMakeSize(184, 591))
-        }];
+        HBShowOpenPanelAtLaunch:            @YES,
+        HBShowSummaryPreview:               @YES,
+        HBDefaultMpegExtension:             @".mp4",
+        HBUseDvdNav:                        @YES,
+        HBLastDestinationDirectoryURL:      [NSKeyedArchiver archivedDataWithRootObject:moviesURL],
+        HBLastSourceDirectoryURL:           [NSKeyedArchiver archivedDataWithRootObject:moviesURL],
+        HBDefaultAutoNaming:                @NO,
+        HBAutoNamingFormat:                 @[@"{Source}", @" ", @"{Title}"],
+        HBAlertWhenDone:                    @(HBDoneActionNotification),
+        HBResetWhenDoneOnLaunch:            @NO,
+        HBAlertWhenDoneSound:               @YES,
+        HBLoggingLevel:                     @1,
+        HBClearOldLogs:                     @YES,
+        HBEncodeLogLocation:                @NO,
+        HBMinTitleScanSeconds:              @10,
+        HBPreviewsNumber:                   @10,
+        HBCqSliderFractional:               @2,
+        HBQueuePauseIfLowSpace:             @YES,
+        HBQueueMinFreeSpace:                @"2",
+        HBQueueAutoClearCompletedItems:     @NO,
+        HBQueueWorkerCounts:                @1
+    }];
 
     // Overwrite the update check interval because previous versions
-    // could be set to a dayly check.
+    // could be set to a daily check.
     NSUInteger week = 60 * 60 * 24 * 7;
-    [[NSUserDefaults standardUserDefaults] setObject:@(week) forKey:@"SUScheduledCheckInterval"];
+    [NSUserDefaults.standardUserDefaults setObject:@(week) forKey:@"SUScheduledCheckInterval"];
 }
 
 /**
@@ -94,10 +118,7 @@
  */
 - (instancetype)init
 {
-    if (self = [super initWithWindowNibName:@"Preferences"])
-    {
-        _languages = [[HBLanguagesSelection alloc] init];
-    }
+    self = [super initWithWindowNibName:@"Preferences"];
     return self;
 }
 
@@ -112,30 +133,36 @@
 }
 
 /**
- * -[HBPreferencesController awakeFromNib]
  *
  * Called after all the outlets in the nib file have been attached. Sets up the
  * toolbar and shows the "General" pane.
  *
  */
-- (void) awakeFromNib
+- (void)windowDidLoad
 {
-    NSToolbar * toolbar = [[NSToolbar alloc] initWithIdentifier: @"Preferences Toolbar"];
-    [toolbar setDelegate: self];
-    [toolbar setAllowsUserCustomization: NO];
-    [toolbar setDisplayMode: NSToolbarDisplayModeIconAndLabel];
-    [toolbar setSizeMode: NSToolbarSizeModeRegular];
-    [[self window] setToolbar: toolbar];
+#if defined(__MAC_11_0)
+    if (@available (macOS 11, *))
+    {
+        self.window.toolbarStyle = NSWindowToolbarStylePreference;
+    }
+#endif
+    
+    NSToolbar *toolbar = [[NSToolbar alloc] initWithIdentifier:@"Preferences Toolbar"];
+    toolbar.delegate = self;
+    toolbar.allowsUserCustomization = NO;
+    toolbar.displayMode = NSToolbarDisplayModeIconAndLabel;
+    toolbar.sizeMode = NSToolbarSizeModeRegular;
+    self.window.toolbar = toolbar;
 
     // Format token field initialization
     [self.formatTokenField setTokenizingCharacterSet:[NSCharacterSet characterSetWithCharactersInString:@"%%"]];
     [self.formatTokenField setCompletionDelay:0.2];
 
-    _buildInFormatTokens = @[@"{Source}", @"{Title}", @"{Date}", @"{Time}", @"{Chapters}", @"{Quality/Bitrate}"];
+    _buildInFormatTokens = @[@"{Source}", @"{Title}", @"{Date}", @"{Time}", @"{Creation-Date}", @"{Creation-Time}", @"{Chapters}", @"{Quality/Bitrate}"];
     [self.builtInTokenField setTokenizingCharacterSet:[NSCharacterSet characterSetWithCharactersInString:@"%%"]];
     [self.builtInTokenField setStringValue:[self.buildInFormatTokens componentsJoinedByString:@"%%"]];
 
-    [toolbar setSelectedItemIdentifier: TOOLBAR_GENERAL];
+    toolbar.selectedItemIdentifier = TOOLBAR_GENERAL;
     [self setPrefView:nil];
 }
 
@@ -143,23 +170,31 @@
      itemForItemIdentifier: (NSString *)ident
  willBeInsertedIntoToolbar: (BOOL)flag
 {
-    if ( [ident isEqualToString:TOOLBAR_GENERAL] )
+    if ([ident isEqualToString:TOOLBAR_GENERAL])
     {
+        NSImage *image = [NSImage imageNamed:NSImageNamePreferencesGeneral];
+#if defined(__MAC_11_0)
+        if (@available (macOS 11, *))
+        {
+            image = [NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:@"General preferences"];
+        }
+#endif
         return [self toolbarItemWithIdentifier:ident
                                          label:NSLocalizedString(@"General", @"Preferences General Toolbar Item")
-                                         image:[NSImage imageNamed:@"settings"]];
+                                         image:image];
     }
-    else if ( [ident isEqualToString:TOOLBAR_AUDIO] )
+    else if ([ident isEqualToString:TOOLBAR_ADVANCED])
     {
-        return [self toolbarItemWithIdentifier:ident
-                                         label:NSLocalizedString(@"Audio", @"Preferences Audio Toolbar Item")
-                                         image:[NSImage imageNamed:@"audio"]];
-    }
-    else if ( [ident isEqualToString:TOOLBAR_ADVANCED] )
-    {
+        NSImage *image = [NSImage imageNamed:NSImageNameAdvanced];
+#if defined(__MAC_11_0)
+        if (@available (macOS 11, *))
+        {
+            image = [NSImage imageWithSystemSymbolName:@"gearshape.2" accessibilityDescription:@"General preferences"];
+        }
+#endif
         return [self toolbarItemWithIdentifier:ident
                                          label:NSLocalizedString(@"Advanced", @"Preferences Advanced Toolbar Item")
-                                         image:[NSImage imageNamed:@"advanced"]];
+                                         image:image];
     }
 
     return nil;
@@ -177,42 +212,45 @@
 
 - (NSArray *) toolbarAllowedItemIdentifiers: (NSToolbar *) toolbar
 {
-    return @[TOOLBAR_GENERAL, TOOLBAR_AUDIO, TOOLBAR_ADVANCED];
+    return @[TOOLBAR_GENERAL, TOOLBAR_ADVANCED];
 }
 
 /* Manage the send encode to xxx.app windows and field */
 /*Opens the app browse window*/
 - (IBAction) browseSendToApp: (id) sender
 {
+    NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
     NSOpenPanel *panel = [NSOpenPanel openPanel];
+
     [panel setAllowsMultipleSelection:NO];
     [panel setCanChooseFiles:YES];
     [panel setCanChooseDirectories:NO];
     [panel setAllowedFileTypes:@[@"app"]];
+    [panel setMessage:NSLocalizedString(@"Select the desired external application", @"Preferences -> send to app destination open panel")];
 
-    NSString *sendToAppDirectory;
-	if ([[NSUserDefaults standardUserDefaults] stringForKey:@"LastSendToAppDirectory"])
+    NSURL *sendToAppDirectory;
+	if ([ud stringForKey:@"HBLastSendToAppDirectory"])
 	{
-		sendToAppDirectory = [[NSUserDefaults standardUserDefaults] stringForKey:@"LastSendToAppDirectory"];
+		sendToAppDirectory = [ud URLForKey:@"HBLastSendToAppDirectory"];
 	}
 	else
 	{
-		sendToAppDirectory = @"/Applications";
+		sendToAppDirectory = [NSURL fileURLWithPath:@"/Applications" isDirectory:YES];
 	}
-    [panel setDirectoryURL:[NSURL fileURLWithPath:sendToAppDirectory]];
+    [panel setDirectoryURL:sendToAppDirectory];
 
     [panel beginSheetModalForWindow:[self window] completionHandler:^(NSInteger result) {
-        if (result == NSOKButton)
+        if (result == NSModalResponseOK)
         {
             NSURL *sendToAppURL = [panel URL];
             NSURL *sendToAppDirectoryURL = [sendToAppURL URLByDeletingLastPathComponent];
-            [[NSUserDefaults standardUserDefaults] setObject:[sendToAppDirectoryURL path] forKey:@"LastSendToAppDirectory"];
+            [ud setURL:sendToAppDirectoryURL forKey:@"HBLastSendToAppDirectory"];
 
             // We set the name of the app to send to in the display field
-            NSString *sendToAppName = [[sendToAppURL lastPathComponent] stringByDeletingPathExtension];
-            [fSendEncodeToAppField setStringValue:sendToAppName];
+            NSString *sendToAppName = sendToAppURL.lastPathComponent.stringByDeletingPathExtension;
+            [self->fSendEncodeToAppField setStringValue:sendToAppName];
 
-            [[NSUserDefaults standardUserDefaults] setObject:[fSendEncodeToAppField stringValue] forKey:@"HBSendToApp"];
+            [ud setObject:self->fSendEncodeToAppField.stringValue forKey:HBSendToApp];
         }
     }];
 }
@@ -223,21 +261,59 @@
 {
     if ([representedObject rangeOfString: @"{"].location == 0 && [representedObject length] > 1)
     {
-        return [(NSString *)representedObject substringWithRange:NSMakeRange(1, [(NSString*)representedObject length]-2)];
+        return [self localizedStringForToken:representedObject];
     }
 
     return representedObject;
+}
+
+- (NSString *)localizedStringForToken:(NSString *)tokenString
+{
+    if ([tokenString isEqualToString:@"{Source}"])
+    {
+        return NSLocalizedString(@"Source", "Preferences -> Output Name Token");
+    }
+    else if ([tokenString isEqualToString:@"{Title}"])
+    {
+        return NSLocalizedString(@"Title", "Preferences -> Output Name Token");
+    }
+    else if ([tokenString isEqualToString:@"{Date}"])
+    {
+        return NSLocalizedString(@"Date", "Preferences -> Output Name Token");
+    }
+    else if ([tokenString isEqualToString:@"{Time}"])
+    {
+        return NSLocalizedString(@"Time", "Preferences -> Output Name Token");
+    }
+    else if ([tokenString isEqualToString:@"{Creation-Date}"])
+    {
+        return NSLocalizedString(@"Creation-Date", "Preferences -> Output Name Token");
+    }
+    else if ([tokenString isEqualToString:@"{Creation-Time}"])
+    {
+        return NSLocalizedString(@"Creation-Time", "Preferences -> Output Name Token");
+    }
+    else if ([tokenString isEqualToString:@"{Chapters}"])
+    {
+        return NSLocalizedString(@"Chapters", "Preferences -> Output Name Token");
+    }
+    else if ([tokenString isEqualToString:@"{Quality/Bitrate}"])
+    {
+        return NSLocalizedString(@"Quality/Bitrate", "Preferences -> Output Name Token");
+    }
+
+    return tokenString;
 }
 
 - (NSTokenStyle)tokenField:(NSTokenField *)tokenField styleForRepresentedObject:(id)representedObject
 {
     if ([representedObject rangeOfString: @"{"].location == 0)
     {
-        return NSRoundedTokenStyle;
+        return NSTokenStyleRounded;
     }
     else
     {
-        return NSPlainTextTokenStyle;
+        return NSTokenStyleNone;
     }
 }
 
@@ -279,7 +355,6 @@
     return YES;
 }
 
-
 #pragma mark - Private methods
 
 - (void) setPrefView: (id) sender
@@ -288,11 +363,7 @@
     if (sender)
     {
         NSString *identifier = [sender itemIdentifier];
-        if ([identifier isEqualToString:TOOLBAR_AUDIO])
-        {
-            view = fAudioView;
-        }
-        else if([identifier isEqualToString:TOOLBAR_ADVANCED])
+        if([identifier isEqualToString:TOOLBAR_ADVANCED])
         {
             view = fAdvancedView;
         }
@@ -307,14 +378,11 @@
     window.contentView = view;
 
     if (window.isVisible)
-        {
+    {
             view.hidden = YES;
 
             [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
-                if ([context respondsToSelector:@selector(setAllowsImplicitAnimation:)])
-                {
-                    context.allowsImplicitAnimation = YES;
-                }
+                context.allowsImplicitAnimation = YES;
                 [window layoutIfNeeded];
 
             } completionHandler:^{

@@ -5,7 +5,7 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import <Foundation/Foundation.h>
-#import "HBPresetCoding.h"
+#import <HandBrakeKit/HBPresetCoding.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -19,7 +19,7 @@ typedef NS_ENUM(NSUInteger, HBAudioTrackSelectionBehavior) {
 
 /**
  *  HBAudioSettings
- *  Stores the audio defaults settings.
+ *  Stores the audio defaults (selection behavior) settings.
  */
 @interface HBAudioDefaults : NSObject <NSSecureCoding, NSCopying, HBPresetCoding>
 
@@ -37,6 +37,7 @@ typedef NS_ENUM(NSUInteger, HBAudioTrackSelectionBehavior) {
 @property(nonatomic, readwrite) BOOL allowEAC3Passthru;
 @property(nonatomic, readwrite) BOOL allowDTSHDPassthru;
 @property(nonatomic, readwrite) BOOL allowDTSPassthru;
+@property(nonatomic, readwrite) BOOL allowMP2Passthru;
 @property(nonatomic, readwrite) BOOL allowMP3Passthru;
 @property(nonatomic, readwrite) BOOL allowTrueHDPassthru;
 @property(nonatomic, readwrite) BOOL allowFLACPassthru;

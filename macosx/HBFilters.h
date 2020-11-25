@@ -5,7 +5,7 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import <Foundation/Foundation.h>
-#import "HBPresetCoding.h"
+#import <HandBrakeKit/HBPresetCoding.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -31,12 +31,16 @@ extern NSString * const HBFiltersChangedNotification;
 @property (nonatomic, readwrite, copy) NSString *denoiseTune;
 @property (nonatomic, readwrite, copy) NSString *denoiseCustomString;
 
-@property (nonatomic, readwrite) int deblock;
+@property (nonatomic, readwrite, copy) NSString *sharpen;
+@property (nonatomic, readwrite, copy) NSString *sharpenPreset;
+@property (nonatomic, readwrite, copy) NSString *sharpenTune;
+@property (nonatomic, readwrite, copy) NSString *sharpenCustomString;
+
+@property (nonatomic, readwrite, copy) NSString *deblock;
+@property (nonatomic, readwrite, copy) NSString *deblockTune;
+@property (nonatomic, readwrite, copy) NSString *deblockCustomString;
 
 @property (nonatomic, readwrite) BOOL grayscale;
-
-@property (nonatomic, readwrite) int rotate;
-@property (nonatomic, readwrite) BOOL flip;
 
 @property (nonatomic, readwrite, weak, nullable) NSUndoManager *undo;
 

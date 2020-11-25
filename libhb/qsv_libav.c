@@ -26,10 +26,12 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 \* ********************************************************************* */
 
-#ifdef USE_QSV
+#include "handbrake/project.h"
 
-#include "hbffmpeg.h"
-#include "qsv_libav.h"
+#if HB_PROJECT_FEATURE_QSV
+
+#include "handbrake/hbffmpeg.h"
+#include "handbrake/qsv_libav.h"
 
 int hb_qsv_get_free_encode_task(hb_qsv_list * tasks)
 {
@@ -205,7 +207,7 @@ void hb_qsv_add_context_usage(hb_qsv_context * qsv, int is_threaded)
     }
 }
 
-int hb_qsv_context_clean(hb_qsv_context * qsv)
+int hb_qsv_context_clean(hb_qsv_context * qsv, int full_job)
 {
     int is_active = 0;
     mfxStatus sts = MFX_ERR_NONE;
@@ -233,7 +235,7 @@ int hb_qsv_context_clean(hb_qsv_context * qsv)
         if (qsv->pipes)
             hb_qsv_pipe_list_clean(&qsv->pipes);
 
-        if (qsv->mfx_session) {
+        if (qsv->mfx_session && !full_job) {
             sts = MFXClose(qsv->mfx_session);
             HB_QSV_CHECK_RESULT(sts, MFX_ERR_NONE, sts);
             qsv->mfx_session = 0;
@@ -605,4 +607,4 @@ void hb_qsv_wait_on_sync(hb_qsv_context *qsv, hb_qsv_stage *stage)
         }
 }
 
-#endif // USE_QSV
+#endif // HB_PROJECT_FEATURE_QSV

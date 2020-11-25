@@ -8,8 +8,8 @@
 
 @interface HBEncodingProgressHUDController ()
 
-@property (weak) IBOutlet NSProgressIndicator *progressIndicator;
-@property (weak) IBOutlet NSTextField *infoLabel;
+@property (nonatomic, weak) IBOutlet NSProgressIndicator *progressIndicator;
+@property (nonatomic, weak) IBOutlet NSTextField *infoLabel;
 
 @end
 
@@ -18,16 +18,6 @@
 - (NSString *)nibName
 {
     return @"HBEncodingProgressHUDController";
-}
-
-- (void)loadView
-{
-    [super loadView];
-
-    if (NSClassFromString(@"NSVisualEffectView") == NO)
-    {
-        self.infoLabel.textColor = [NSColor whiteColor];
-    }
 }
 
 - (BOOL)canBeHidden
@@ -58,6 +48,44 @@
 - (BOOL)HB_scrollWheel:(NSEvent *)theEvent
 {
     return NO;
+}
+
+@end
+
+@interface HBEncodingProgressHUDController (TouchBar) <NSTouchBarProvider, NSTouchBarDelegate>
+@end
+
+@implementation HBEncodingProgressHUDController (TouchBar)
+
+@dynamic touchBar;
+
+static NSTouchBarItemIdentifier HBTouchBarCancelEncoding = @"fr.handbrake.cancelEncoding";
+
+- (NSTouchBar *)makeTouchBar
+{
+    NSTouchBar *bar = [[NSTouchBar alloc] init];
+    bar.delegate = self;
+
+    bar.escapeKeyReplacementItemIdentifier = HBTouchBarCancelEncoding;
+
+    return bar;
+}
+
+- (NSTouchBarItem *)touchBar:(NSTouchBar *)touchBar makeItemForIdentifier:(NSTouchBarItemIdentifier)identifier
+{
+    if ([identifier isEqualTo:HBTouchBarCancelEncoding])
+    {
+        NSCustomTouchBarItem *item = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
+        item.customizationLabel = NSLocalizedString(@"Cancel Encoding", @"Touch bar");
+
+        NSButton *button = [NSButton buttonWithTitle:NSLocalizedString(@"Cancel", @"Touch bar") target:self action:@selector(cancelEncoding:)];
+        button.bezelColor = NSColor.systemRedColor;
+
+        item.view = button;
+        return item;
+    }
+
+    return nil;
 }
 
 @end

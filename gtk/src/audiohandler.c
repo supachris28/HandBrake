@@ -1,14 +1,13 @@
 /* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
 /*
  * audiohandler.c
- * Copyright (C) John Stebbins 2008-2017 <stebbins@stebbins>
+ * Copyright (C) John Stebbins 2008-2020 <stebbins@stebbins>
  *
  * audiohandler.c is free software.
  *
  * You may redistribute it and/or modify it under the terms of the
- * GNU General Public License, as published by the Free Software
- * Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * GNU General Public License version 2, as published by the Free Software
+ * Foundation.
  *
  * audiohandler.c is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -24,8 +23,10 @@
 
 #include <glib/gi18n.h>
 #include "ghbcompat.h"
-#include "hb.h"
+#include "handbrake/handbrake.h"
 #include "settings.h"
+#include "jobdict.h"
+#include "titledict.h"
 #include "hb-backend.h"
 #include "values.h"
 #include "callbacks.h"
@@ -60,6 +61,7 @@ ghb_sanitize_audio_settings(GhbValue *settings, GhbValue *asettings)
     // Sanitize codec
     const char        * mux_name;
     int                 title_id, mux, acodec, fallback, copy_mask, track;
+    uint32_t            in_codec = 0;
     hb_audio_config_t * aconfig;
     const hb_title_t  * title;
 
@@ -74,7 +76,11 @@ ghb_sanitize_audio_settings(GhbValue *settings, GhbValue *asettings)
     copy_mask = ghb_get_copy_mask(settings);
     track     = ghb_dict_get_int(asettings, "Track");
     aconfig   = ghb_get_audio_info(title, track);
-    acodec    = ghb_select_audio_codec(mux, aconfig, acodec,
+    if (aconfig != NULL)
+    {
+        in_codec = aconfig->in.codec;
+    }
+    acodec    = ghb_select_audio_codec(mux, in_codec, acodec,
                                        fallback, copy_mask);
     ghb_dict_set_string(asettings, "Encoder",
                         hb_audio_encoder_get_short_name(acodec));
@@ -114,25 +120,24 @@ ghb_adjust_audio_rate_combos(signal_user_data_t *ud, GhbValue *asettings)
     {
         ghb_sanitize_audio_settings(ud->settings, asettings);
 
-        int track, title_id, mix, acodec;
-        const hb_title_t *title;
-        hb_audio_config_t *aconfig;
+        int track, mix, acodec;
+        GhbValue * atrack;
+        uint64_t layout;
 
-        title_id = ghb_dict_get_int(ud->settings, "title");
-        title = ghb_lookup_title(title_id, NULL);
         track = ghb_dict_get_int(asettings, "Track");
-        aconfig = ghb_get_audio_info(title, track);
 
         acodec = ghb_settings_audio_encoder_codec(asettings, "Encoder");
         mix = ghb_settings_mixdown_mix(asettings, "Mixdown");
 
         int low, high, sr;
         sr = ghb_dict_get_int(asettings, "Samplerate");
-        if (sr == 0 && aconfig != NULL)
+        atrack = ghb_get_title_audio_track(ud->settings, track);
+        if (sr == 0)
         {
-            sr = aconfig->in.samplerate;
+            sr = ghb_dict_get_int(atrack, "SampleRate");
         }
-        mix = ghb_get_best_mix(aconfig, acodec, mix);
+        layout = ghb_dict_get_int(atrack, "ChannelLayout");
+        mix = ghb_get_best_mix(layout, acodec, mix);
         hb_audio_bitrate_get_limits(acodec, sr, mix, &low, &high);
 
         GtkWidget *w = GHB_WIDGET(ud->builder, "AudioBitrate");
@@ -147,7 +152,7 @@ ghb_adjust_audio_rate_combos(signal_user_data_t *ud, GhbValue *asettings)
         ghb_ui_update(ud, "AudioBitrate",
                       ghb_dict_get_value(asettings, "Bitrate"));
         gdouble quality = get_ui_quality(asettings);
-        ghb_ui_update(ud, "AudioTrackQualityX", ghb_double_value_new(quality));
+        ghb_ui_update(ud, "AudioTrackQualityX", ghb_double_value(quality));
         ghb_ui_update(ud, "AudioSamplerate",
                       ghb_dict_get_value(asettings, "Samplerate"));
         ghb_ui_update(ud, "AudioMixdown",
@@ -259,10 +264,8 @@ audio_deps(signal_user_data_t *ud, GhbValue *asettings, GtkWidget *widget)
 }
 
 gint
-ghb_select_audio_codec(gint mux, hb_audio_config_t *aconfig, gint acodec, gint fallback, gint copy_mask)
+ghb_select_audio_codec(gint mux, guint32 in_codec, gint acodec, gint fallback, gint copy_mask)
 {
-    guint32 in_codec = aconfig != NULL ? aconfig->in.codec : 0;
-
     if (acodec == HB_ACODEC_AUTO_PASS)
     {
         return hb_autopassthru_get_encoder(in_codec, copy_mask, fallback, mux);
@@ -396,7 +399,7 @@ void ghb_sanitize_audio_tracks(signal_user_data_t *ud)
         ghb_ui_update(ud, "AudioBitrate",
                       ghb_dict_get_value(asettings, "Bitrate"));
         gdouble quality = get_ui_quality(asettings);
-        ghb_ui_update(ud, "AudioTrackQualityX", ghb_double_value_new(quality));
+        ghb_ui_update(ud, "AudioTrackQualityX", ghb_double_value(quality));
         ghb_ui_update(ud, "AudioSamplerate",
                       ghb_dict_get_value(asettings, "Samplerate"));
         ghb_ui_update(ud, "AudioMixdown",
@@ -460,18 +463,21 @@ audio_update_dialog_widgets(signal_user_data_t *ud, GhbValue *asettings)
         drc = ghb_dict_get_double(asettings, "DRC");
         s_drc = get_drc_string(drc);
         ghb_ui_update(ud, "AudioTrackDRCValue", ghb_string_value(s_drc));
+        free(s_drc);
         ghb_ui_update(ud, "AudioTrackGainSlider",
                       ghb_dict_get_value(asettings, "Gain"));
         gain = ghb_dict_get_double(asettings, "Gain");
         s_gain = get_gain_string(gain);
         ghb_ui_update(ud, "AudioTrackGainValue", ghb_string_value(s_gain));
+        g_free(s_gain);
 
         int codec = ghb_settings_audio_encoder_codec(asettings, "Encoder");
         quality = ghb_dict_get_double(asettings, "Quality");
         qualityx = get_quality(codec, quality);
-        ghb_ui_update(ud, "AudioTrackQualityX", ghb_double_value_new(qualityx));
+        ghb_ui_update(ud, "AudioTrackQualityX", ghb_double_value(qualityx));
         s_quality = get_quality_string(codec, quality);
         ghb_ui_update(ud, "AudioTrackQualityValue", ghb_string_value(s_quality));
+        free(s_quality);
         // Setting a radio button to FALSE does not automatically make
         // the other one TRUE
         qe = ghb_audio_quality_enabled(asettings);
@@ -508,7 +514,6 @@ ghb_get_user_audio_lang(GhbValue *settings, const hb_title_t *title, gint track)
 static GhbValue*
 audio_add_track(
     GhbValue *settings,
-    const hb_title_t *title,
     int track,
     int encoder,
     gdouble quality,
@@ -519,9 +524,8 @@ audio_add_track(
     gdouble gain)
 {
     GhbValue *asettings;
-    hb_audio_config_t *aconfig = NULL;
+    GhbValue *atrack;
 
-    aconfig = ghb_get_audio_info(title, track);
     asettings = ghb_dict_new();
 
     ghb_dict_set_int(asettings, "Track", track);
@@ -531,9 +535,16 @@ audio_add_track(
     ghb_dict_set_int(asettings, "Bitrate", bitrate);
     ghb_dict_set_int(asettings, "Samplerate", samplerate);
 
-    if (aconfig != NULL)
+    atrack = ghb_get_title_audio_track(settings, track);
+    if (atrack != NULL)
     {
-        mix = ghb_get_best_mix(aconfig, encoder, mix);
+        int layout = ghb_dict_get_int(atrack, "ChannelLayout");
+        const char * name = ghb_dict_get_string(atrack, "Name");
+        mix = ghb_get_best_mix(layout, encoder, mix);
+        if (name != NULL)
+        {
+            ghb_dict_set_string(asettings, "Name", name);
+        }
     }
     ghb_dict_set_string(asettings, "Mixdown", hb_mixdown_get_short_name(mix));
     ghb_dict_set_double(asettings, "DRC", drc);
@@ -601,9 +612,9 @@ audio_select_and_add_track(
         hb_audio_config_t *aconfig;
         aconfig = hb_list_audio_config_item(title->list_audio, track);
         select_acodec = ghb_select_audio_codec(
-                            mux->format, aconfig, acodec, fallback, copy_mask);
+                            mux->format, aconfig->in.codec, acodec, fallback, copy_mask);
 
-        asettings = audio_add_track(settings, title, track, select_acodec,
+        asettings = audio_add_track(settings, track, select_acodec,
                                     quality, bitrate,
                                     samplerate, mix, drc, gain);
     }
@@ -895,6 +906,39 @@ ghb_audio_list_refresh_all(signal_user_data_t *ud)
 {
     ghb_sanitize_audio_tracks(ud);
     audio_refresh_list_ui(ud);
+    ghb_update_summary_info(ud);
+}
+
+void
+audio_update_setting(
+    GhbValue           *val,
+    const char         *name,
+    signal_user_data_t *ud)
+{
+    GhbValue *asettings;
+
+    if (block_updates)
+    {
+        ghb_value_free(&val);
+        return;
+    }
+
+    asettings = audio_get_selected_settings(ud, NULL);
+    if (asettings != NULL)
+    {
+        if (val != NULL)
+            ghb_dict_set(asettings, name, val);
+        else
+            ghb_dict_remove(asettings, name);
+        audio_deps(ud, asettings, NULL);
+        ghb_update_summary_info(ud);
+        ghb_audio_list_refresh_selected(ud);
+        ghb_live_reset(ud);
+    }
+    else
+    {
+        ghb_value_free(&val);
+    }
 }
 
 G_MODULE_EXPORT void
@@ -902,24 +946,18 @@ audio_codec_changed_cb(GtkWidget *widget, signal_user_data_t *ud)
 {
     static gint prev_acodec = 0;
     gint acodec;
-    GhbValue *asettings;
 
     ghb_widget_to_setting(ud->settings, widget);
-    asettings = audio_get_selected_settings(ud, NULL);
-    if (!block_updates && asettings != NULL)
-    {
-        ghb_dict_set(asettings, "Encoder", ghb_widget_value(widget));
-        audio_deps(ud, asettings, widget);
-        ghb_audio_list_refresh_selected(ud);
-        ghb_live_reset(ud);
-    }
+    audio_update_setting(ghb_widget_value(widget), "Encoder", ud);
 
     acodec = ghb_settings_audio_encoder_codec(ud->settings, "AudioEncoder");
 
     float low, high, gran, defval;
     int dir;
+    GhbValue *asettings;
     hb_audio_quality_get_limits(acodec, &low, &high, &gran, &dir);
     defval = hb_audio_quality_get_default(acodec);
+    asettings = audio_get_selected_settings(ud, NULL);
     if (asettings != NULL && ghb_audio_quality_enabled(asettings))
     {
         gdouble quality = ghb_dict_get_double(asettings, "Quality");
@@ -950,14 +988,10 @@ audio_codec_changed_cb(GtkWidget *widget, signal_user_data_t *ud)
     {
         // Transition from passthru to not, put some audio settings back to
         // pref settings
-        int title_id;
-        const hb_title_t *title;
-        gint titleindex;
         gint track;
         gint br, sr, mix;
-
-        title_id = ghb_dict_get_int(ud->settings, "title");
-        title = ghb_lookup_title(title_id, &titleindex);
+        uint64_t layout;
+        GhbValue * atrack;
 
         if (asettings != NULL)
         {
@@ -980,13 +1014,13 @@ audio_codec_changed_cb(GtkWidget *widget, signal_user_data_t *ud)
         ghb_ui_update(ud, "AudioSamplerate",
             ghb_string_value(ghb_audio_samplerate_get_short_name(sr)));
 
-        hb_audio_config_t *aconfig;
-        aconfig = ghb_get_audio_info(title, track);
+        atrack = ghb_get_title_audio_track(ud->settings, track);
         if (sr == 0)
         {
-            sr = aconfig ? aconfig->in.samplerate : 48000;
+            sr = ghb_dict_get_int(atrack, "SampleRate");
         }
-        mix = ghb_get_best_mix( aconfig, acodec, mix);
+        layout = ghb_dict_get_int(atrack, "ChannelLayout");
+        mix = ghb_get_best_mix(layout, acodec, mix);
         br = hb_audio_bitrate_get_best(acodec, br, sr, mix);
         ghb_ui_update(ud, "AudioBitrate",
             ghb_string_value(ghb_audio_bitrate_get_short_name(br)));
@@ -1000,56 +1034,11 @@ audio_codec_changed_cb(GtkWidget *widget, signal_user_data_t *ud)
 G_MODULE_EXPORT void
 audio_track_changed_cb(GtkWidget *widget, signal_user_data_t *ud)
 {
-    GhbValue *asettings;
-
     g_debug("audio_track_changed_cb ()");
     ghb_widget_to_setting(ud->settings, widget);
-    if (block_updates)
-    {
-        return;
-    }
-
-    asettings = audio_get_selected_settings(ud, NULL);
-    if (asettings != NULL)
-    {
-        GhbValue *val = ghb_widget_value(widget);
-        ghb_dict_set(asettings, "Track", ghb_value_xform(val, GHB_INT));
-        ghb_value_free(&val);
-        audio_deps(ud, asettings, widget);
-        ghb_audio_list_refresh_selected(ud);
-        ghb_live_reset(ud);
-    }
-}
-
-void
-audio_update_setting(
-    GhbValue           *val,
-    const char         *name,
-    signal_user_data_t *ud)
-{
-    GhbValue *asettings;
-
-    if (block_updates)
-    {
-        ghb_value_free(&val);
-        return;
-    }
-
-    asettings = audio_get_selected_settings(ud, NULL);
-    if (asettings != NULL)
-    {
-        if (val != NULL)
-            ghb_dict_set(asettings, name, val);
-        else
-            ghb_dict_remove(asettings, name);
-        audio_deps(ud, asettings, NULL);
-        ghb_audio_list_refresh_selected(ud);
-        ghb_live_reset(ud);
-    }
-    else
-    {
-        ghb_value_free(&val);
-    }
+    GhbValue *val = ghb_widget_value(widget);
+    audio_update_setting(ghb_value_xform(val, GHB_INT), "Track", ud);
+    ghb_value_free(&val);
 }
 
 G_MODULE_EXPORT void
@@ -1155,8 +1144,9 @@ audio_passthru_widget_changed_cb(GtkWidget *widget, signal_user_data_t *ud)
 
     ghb_widget_to_setting(ud->settings, widget);
     copy_mask = ghb_create_copy_mask(ud->settings);
+    ghb_dict_set(ud->settings, "AudioCopyMask", copy_mask);
     audio = ghb_get_job_audio_settings(ud->settings);
-    ghb_dict_set(audio, "CopyMask", copy_mask);
+    ghb_dict_set(audio, "CopyMask", ghb_value_dup(copy_mask));
     ghb_clear_presets_selection(ud);
 }
 
@@ -1398,6 +1388,7 @@ audio_add_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
                 audio_update_dialog_widgets(ud, asettings);
             }
             audio_refresh_list_ui(ud);
+            ghb_update_summary_info(ud);
         }
         else
         {
@@ -1441,21 +1432,18 @@ audio_add_all_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
         } while (asettings != NULL);
     }
     audio_refresh_list_ui(ud);
+    ghb_update_summary_info(ud);
 }
 
-G_MODULE_EXPORT void
-audio_edit_clicked_cb(GtkWidget *widget, gchar *path, signal_user_data_t *ud)
+static void
+audio_edit(GtkTreeView *tv, GtkTreePath *tp, signal_user_data_t *ud)
 {
-    GtkTreeView *tv;
-    GtkTreePath *tp;
     GtkTreeModel *tm;
     GtkTreeSelection *ts;
     GtkTreeIter ti;
 
-    tv = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_list_view"));
     ts = gtk_tree_view_get_selection(tv);
     tm = gtk_tree_view_get_model(tv);
-    tp = gtk_tree_path_new_from_string (path);
     if (gtk_tree_path_get_depth(tp) > 1) return;
     if (gtk_tree_model_get_iter(tm, &ti, tp))
     {
@@ -1487,6 +1475,24 @@ audio_edit_clicked_cb(GtkWidget *widget, gchar *path, signal_user_data_t *ud)
             ghb_value_free(&backup);
         }
     }
+}
+
+G_MODULE_EXPORT void
+audio_edit_clicked_cb(GtkWidget *widget, gchar *path, signal_user_data_t *ud)
+{
+    GtkTreeView *tv;
+    GtkTreePath *tp;
+
+    tv = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_list_view"));
+    tp = gtk_tree_path_new_from_string (path);
+    audio_edit(tv, tp, ud);
+}
+
+G_MODULE_EXPORT void
+audio_row_activated_cb(GtkTreeView *tv, GtkTreePath *tp,
+                       GtkTreeViewColumn *col, signal_user_data_t *ud)
+{
+    audio_edit(tv, tp, ud);
 }
 
 G_MODULE_EXPORT void
@@ -1554,6 +1560,7 @@ audio_reset_clicked_cb(GtkWidget *widget, signal_user_data_t *ud)
     ghb_sanitize_audio_tracks(ud);
     audio_update_dialog_widgets(ud, audio_get_selected_settings(ud, NULL));
     audio_refresh_list_ui(ud);
+    ghb_update_summary_info(ud);
 }
 
 static GtkWidget *find_widget_recurse(GtkWidget *widget, const gchar *name)
@@ -1730,7 +1737,6 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     GtkLabel *label;
     GtkRadioButton *radio;
     GtkButton *button;
-    GtkImage *image;
 
     box = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
 
@@ -1743,10 +1749,12 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_name(GTK_WIDGET(button), "add_button");
     gtk_widget_hide(GTK_WIDGET(button));
     g_signal_connect(button, "clicked", (GCallback)audio_def_setting_add_cb, ud);
-    gtk_box_pack_start(box, GTK_WIDGET(button), FALSE, FALSE, 0);
+    ghb_box_append_child(box, GTK_WIDGET(button));
 
     // Hidden widgets box
     box2 = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
+    gtk_widget_set_hexpand(GTK_WIDGET(box2), TRUE);
+    gtk_widget_set_halign(GTK_WIDGET(box2), GTK_ALIGN_FILL);
     gtk_widget_set_name(GTK_WIDGET(box2), "settings_box");
 
     // Audio Encoder ComboBox
@@ -1762,7 +1770,7 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_name(GTK_WIDGET(combo), "AudioEncoder");
     gtk_widget_show(GTK_WIDGET(combo));
     g_signal_connect(combo, "changed", (GCallback)audio_def_encoder_changed_cb, ud);
-    gtk_box_pack_start(box2, GTK_WIDGET(combo), FALSE, FALSE, 0);
+    ghb_box_append_child(box2, GTK_WIDGET(combo));
 
     box3 = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
     gtk_widget_set_name(GTK_WIDGET(box3), "br_q_box");
@@ -1774,15 +1782,15 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     radio = GTK_RADIO_BUTTON(gtk_radio_button_new_with_label(NULL, _("Bitrate")));
     gtk_widget_set_name(GTK_WIDGET(radio), "AudioTrackBitrateEnable");
     gtk_widget_show(GTK_WIDGET(radio));
-    gtk_box_pack_start(vbox, GTK_WIDGET(radio), FALSE, FALSE, 0);
+    ghb_box_append_child(vbox, GTK_WIDGET(radio));
     radio = GTK_RADIO_BUTTON(
                 gtk_radio_button_new_with_label_from_widget(radio, _("Quality")));
     gtk_widget_set_name(GTK_WIDGET(radio), "AudioTrackQualityEnable");
     g_signal_connect(radio, "toggled", (GCallback)audio_def_quality_enable_changed_cb, ud);
     gtk_widget_show(GTK_WIDGET(radio));
-    gtk_box_pack_start(vbox, GTK_WIDGET(radio), FALSE, FALSE, 0);
+    ghb_box_append_child(vbox, GTK_WIDGET(radio));
     gtk_widget_show(GTK_WIDGET(vbox));
-    gtk_box_pack_start(box3, GTK_WIDGET(vbox), FALSE, FALSE, 0);
+    ghb_box_append_child(box3, GTK_WIDGET(vbox));
 
     // Audio Bitrate ComboBox
     combo = GTK_COMBO_BOX(gtk_combo_box_new());
@@ -1795,7 +1803,7 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_name(GTK_WIDGET(combo), "AudioBitrate");
     gtk_widget_show(GTK_WIDGET(combo));
     g_signal_connect(combo, "changed", (GCallback)audio_def_encode_setting_changed_cb, ud);
-    gtk_box_pack_start(box3, GTK_WIDGET(combo), FALSE, FALSE, 0);
+    ghb_box_append_child(box3, GTK_WIDGET(combo));
 
     GtkBox *qbox;
     qbox = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
@@ -1813,8 +1821,7 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
         "weather-clear",
         NULL
     };
-    scale = GTK_SCALE_BUTTON(gtk_scale_button_new(GTK_ICON_SIZE_BUTTON,
-                                                  0, 10, 0.1, quality_icons));
+    scale = GTK_SCALE_BUTTON(ghb_scale_button_new(0, 10, 0.1, quality_icons));
     gtk_widget_set_tooltip_markup(GTK_WIDGET(scale),
       _("<b>Audio Quality:</b>\n"
         "For encoders that support it, adjust the quality of the output."));
@@ -1823,7 +1830,7 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_name(GTK_WIDGET(scale), "AudioTrackQualityX");
     gtk_widget_show(GTK_WIDGET(scale));
     g_signal_connect(scale, "value-changed", (GCallback)audio_def_quality_changed_cb, ud);
-    gtk_box_pack_start(qbox, GTK_WIDGET(scale), FALSE, FALSE, 0);
+    ghb_box_append_child(qbox, GTK_WIDGET(scale));
 
     // Audio Quality Label
     label = GTK_LABEL(gtk_label_new("0.00"));
@@ -1832,10 +1839,10 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_valign(GTK_WIDGET(label), GTK_ALIGN_CENTER);
     gtk_widget_set_name(GTK_WIDGET(label), "AudioTrackQualityValue");
     gtk_widget_show(GTK_WIDGET(label));
-    gtk_box_pack_start(qbox, GTK_WIDGET(label), FALSE, FALSE, 0);
+    ghb_box_append_child(qbox, GTK_WIDGET(label));
     gtk_widget_hide(GTK_WIDGET(qbox));
-    gtk_box_pack_start(box3, GTK_WIDGET(qbox), FALSE, FALSE, 0);
-    gtk_box_pack_start(box2, GTK_WIDGET(box3), FALSE, FALSE, 0);
+    ghb_box_append_child(box3, GTK_WIDGET(qbox));
+    ghb_box_append_child(box2, GTK_WIDGET(box3));
 
     // Audio Mix ComboBox
     combo = GTK_COMBO_BOX(gtk_combo_box_new());
@@ -1848,7 +1855,7 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_name(GTK_WIDGET(combo), "AudioMixdown");
     gtk_widget_show(GTK_WIDGET(combo));
     g_signal_connect(combo, "changed", (GCallback)audio_def_encode_setting_changed_cb, ud);
-    gtk_box_pack_start(box2, GTK_WIDGET(combo), FALSE, FALSE, 0);
+    ghb_box_append_child(box2, GTK_WIDGET(combo));
 
     // Audio Sample Rate ComboBox
     combo = GTK_COMBO_BOX(gtk_combo_box_new());
@@ -1861,7 +1868,7 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_name(GTK_WIDGET(combo), "AudioSamplerate");
     gtk_widget_show(GTK_WIDGET(combo));
     g_signal_connect(combo, "changed", (GCallback)audio_def_encode_setting_changed_cb, ud);
-    gtk_box_pack_start(box2, GTK_WIDGET(combo), FALSE, FALSE, 0);
+    ghb_box_append_child(box2, GTK_WIDGET(combo));
 
     box3 = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
     gtk_widget_set_name(GTK_WIDGET(box3), "gain_box");
@@ -1875,8 +1882,7 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
         "audio-volume-medium",
         NULL
     };
-    scale = GTK_SCALE_BUTTON(gtk_scale_button_new(GTK_ICON_SIZE_BUTTON,
-                                                  -20, 21, 1, gain_icons));
+    scale = GTK_SCALE_BUTTON(ghb_scale_button_new(-20, 21, 1, gain_icons));
     gtk_widget_set_tooltip_markup(GTK_WIDGET(scale),
       _("<b>Audio Gain:</b> "
         "Adjust the amplification or attenuation of the output audio track."));
@@ -1885,7 +1891,7 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_name(GTK_WIDGET(scale), "AudioTrackGainSlider");
     gtk_widget_show(GTK_WIDGET(scale));
     g_signal_connect(scale, "value-changed", (GCallback)audio_def_gain_changed_cb, ud);
-    gtk_box_pack_start(box3, GTK_WIDGET(scale), FALSE, FALSE, 0);
+    ghb_box_append_child(box3, GTK_WIDGET(scale));
 
     // Audio Gain Label
     label = GTK_LABEL(gtk_label_new(_("0dB")));
@@ -1894,8 +1900,8 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_valign(GTK_WIDGET(label), GTK_ALIGN_CENTER);
     gtk_widget_set_name(GTK_WIDGET(label), "AudioTrackGainValue");
     gtk_widget_show(GTK_WIDGET(label));
-    gtk_box_pack_start(box3, GTK_WIDGET(label), FALSE, FALSE, 0);
-    gtk_box_pack_start(box2, GTK_WIDGET(box3), FALSE, FALSE, 0);
+    ghb_box_append_child(box3, GTK_WIDGET(label));
+    ghb_box_append_child(box2, GTK_WIDGET(box3));
 
     box3 = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
     gtk_widget_set_name(GTK_WIDGET(box3), "drc_box");
@@ -1906,8 +1912,7 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
         "audio-input-microphone",
         NULL
     };
-    scale = GTK_SCALE_BUTTON(gtk_scale_button_new(GTK_ICON_SIZE_BUTTON,
-                                                  0.9, 4, 0.1, drc_icons));
+    scale = GTK_SCALE_BUTTON(ghb_scale_button_new(0.9, 4, 0.1, drc_icons));
     gtk_widget_set_tooltip_markup(GTK_WIDGET(scale),
       _("<b>Dynamic Range Compression:</b> "
         "Adjust the dynamic range of the output audio track.\n\n"
@@ -1920,7 +1925,7 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_name(GTK_WIDGET(scale), "AudioTrackDRCSlider");
     gtk_widget_show(GTK_WIDGET(scale));
     g_signal_connect(scale, "value-changed", (GCallback)audio_def_drc_changed_cb, ud);
-    gtk_box_pack_start(box3, GTK_WIDGET(scale), FALSE, FALSE, 0);
+    ghb_box_append_child(box3, GTK_WIDGET(scale));
 
     // Audio DRC Label
     label = GTK_LABEL(gtk_label_new(_("Off")));
@@ -1929,14 +1934,14 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_valign(GTK_WIDGET(label), GTK_ALIGN_CENTER);
     gtk_widget_set_name(GTK_WIDGET(label), "AudioTrackDRCValue");
     gtk_widget_show(GTK_WIDGET(label));
-    gtk_box_pack_start(box3, GTK_WIDGET(label), FALSE, FALSE, 0);
-    gtk_box_pack_start(box2, GTK_WIDGET(box3), FALSE, FALSE, 0);
+    ghb_box_append_child(box3, GTK_WIDGET(label));
+    ghb_box_append_child(box2, GTK_WIDGET(box3));
 
     // Remove button
-    image = GTK_IMAGE(gtk_image_new_from_icon_name("hb-remove",
-                                                   GTK_ICON_SIZE_BUTTON));
     button = GTK_BUTTON(gtk_button_new());
-    gtk_button_set_image(button, GTK_WIDGET(image));
+    gtk_widget_set_hexpand(GTK_WIDGET(button), TRUE);
+    gtk_widget_set_halign(GTK_WIDGET(button), GTK_ALIGN_FILL);
+    ghb_button_set_icon_name(button, "hb-remove");
     gtk_widget_set_tooltip_markup(GTK_WIDGET(button),
     _("Remove this audio encoder"));
     gtk_button_set_relief(button, GTK_RELIEF_NONE);
@@ -1945,10 +1950,10 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
     gtk_widget_set_name(GTK_WIDGET(button), "remove_button");
     gtk_widget_show(GTK_WIDGET(button));
     g_signal_connect(button, "clicked", (GCallback)audio_def_setting_remove_cb, ud);
-    gtk_box_pack_start(box2, GTK_WIDGET(button), TRUE, TRUE, 0);
+    ghb_box_append_child(box2, GTK_WIDGET(button));
 
     gtk_widget_show(GTK_WIDGET(box2));
-    gtk_box_pack_start(box, GTK_WIDGET(box2), TRUE, TRUE, 0);
+    ghb_box_append_child(box, GTK_WIDGET(box2));
 
     gtk_widget_show(GTK_WIDGET(box));
 
@@ -1956,28 +1961,28 @@ GtkWidget * ghb_create_audio_settings_row(signal_user_data_t *ud)
 
     int width;
     widget = find_widget(GTK_WIDGET(box), "AudioEncoder");
-    gtk_widget_get_preferred_width(widget, NULL, &width);
+    ghb_widget_get_preferred_width(widget, NULL, &width);
 
     widget = GHB_WIDGET(ud->builder, "audio_defaults_encoder_label");
     gtk_widget_set_size_request(widget, width, -1);
     widget = find_widget(GTK_WIDGET(box), "br_q_box");
-    gtk_widget_get_preferred_width(widget, NULL, &width);
+    ghb_widget_get_preferred_width(widget, NULL, &width);
     widget = GHB_WIDGET(ud->builder, "audio_defaults_bitrate_label");
     gtk_widget_set_size_request(widget, width, -1);
     widget = find_widget(GTK_WIDGET(box), "AudioMixdown");
-    gtk_widget_get_preferred_width(widget, NULL, &width);
+    ghb_widget_get_preferred_width(widget, NULL, &width);
     widget = GHB_WIDGET(ud->builder, "audio_defaults_mixdown_label");
     gtk_widget_set_size_request(widget, width, -1);
     widget = find_widget(GTK_WIDGET(box), "AudioSamplerate");
-    gtk_widget_get_preferred_width(widget, NULL, &width);
+    ghb_widget_get_preferred_width(widget, NULL, &width);
     widget = GHB_WIDGET(ud->builder, "audio_defaults_samplerate_label");
     gtk_widget_set_size_request(widget, width, -1);
     widget = find_widget(GTK_WIDGET(box), "gain_box");
-    gtk_widget_get_preferred_width(widget, NULL, &width);
+    ghb_widget_get_preferred_width(widget, NULL, &width);
     widget = GHB_WIDGET(ud->builder, "audio_defaults_gain_label");
     gtk_widget_set_size_request(widget, width, -1);
     widget = find_widget(GTK_WIDGET(box), "drc_box");
-    gtk_widget_get_preferred_width(widget, NULL, &width);
+    ghb_widget_get_preferred_width(widget, NULL, &width);
     widget = GHB_WIDGET(ud->builder, "audio_defaults_drc_label");
     gtk_widget_set_size_request(widget, width, -1);
 
@@ -1999,70 +2004,154 @@ audio_def_setting_update(signal_user_data_t *ud, GtkWidget *widget)
     }
 }
 
+void
+audio_add_lang_iter(GtkTreeModel *tm, GtkTreeIter *iter, signal_user_data_t *ud)
+{
+    GtkTreeView         * selected;
+    GtkTreeStore        * selected_ts;
+    GtkTreeIter           pos;
+    GtkTreePath         * tp;
+    char                * lang;
+    int                   index;
+    const iso639_lang_t * iso_lang;
+    GhbValue            * glang, * alang_list;
+    GtkTreeSelection    * tsel;
+
+    selected    = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_selected_lang"));
+    selected_ts = GTK_TREE_STORE(gtk_tree_view_get_model(selected));
+    tsel        = gtk_tree_view_get_selection(selected);
+
+    // Add to UI selected language list box
+    gtk_tree_model_get(tm, iter, 0, &lang, 1, &index, -1);
+    gtk_tree_store_append(selected_ts, &pos, NULL);
+    gtk_tree_store_set(selected_ts, &pos, 0, lang, 1, index, -1);
+    g_free(lang);
+
+    // Select the item added to the selected list and make it
+    // visible in the scrolled window
+    tp = gtk_tree_model_get_path(GTK_TREE_MODEL(selected_ts), &pos);
+    gtk_tree_selection_select_iter(tsel, &pos);
+    gtk_tree_view_scroll_to_cell(selected, tp, NULL, FALSE, 0, 0);
+    gtk_tree_path_free(tp);
+
+    // Remove from UI available language list box
+    gtk_tree_store_remove(GTK_TREE_STORE(tm), iter);
+
+    // Add to preset language list
+    iso_lang = ghb_iso639_lookup_by_int(index);
+    glang = ghb_string_value_new(iso_lang->iso639_2);
+    alang_list = ghb_dict_get_value(ud->settings, "AudioLanguageList");
+    ghb_array_append(alang_list, glang);
+    ghb_clear_presets_selection(ud);
+}
+
+G_MODULE_EXPORT void
+audio_avail_lang_activated_cb(GtkTreeView *tv, GtkTreePath *tp,
+                              GtkTreeViewColumn *column, signal_user_data_t *ud)
+{
+    GtkTreeIter    iter;
+    GtkTreeModel * tm = gtk_tree_view_get_model(tv);
+
+    if (gtk_tree_model_get_iter(tm, &iter, tp))
+    {
+        audio_add_lang_iter(tm, &iter, ud);
+    }
+}
+
 G_MODULE_EXPORT void
 audio_add_lang_clicked_cb(GtkWidget *widget, signal_user_data_t *ud)
 {
-    GtkListBox *avail = GTK_LIST_BOX(GHB_WIDGET(ud->builder, "audio_avail_lang"));
-    GtkListBox *selected = GTK_LIST_BOX(GHB_WIDGET(ud->builder, "audio_selected_lang"));
-    GtkListBoxRow *row;
-    GtkWidget *label;
+    GtkTreeView      * avail;
+    GtkTreeModel     * avail_tm;
+    GtkTreeSelection * tsel;
+    GtkTreeIter        iter;
 
-    row = gtk_list_box_get_selected_row(avail);
-    if (row != NULL)
+    avail       = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_avail_lang"));
+    avail_tm    = gtk_tree_view_get_model(avail);
+    tsel        = gtk_tree_view_get_selection(avail);
+    if (gtk_tree_selection_get_selected(tsel, NULL, &iter))
     {
-        int idx;
-        const iso639_lang_t *lang;
-        GhbValue *glang, *alang_list;
+        audio_add_lang_iter(avail_tm, &iter, ud);
+    }
+}
 
-        // Remove from UI available language list box
-        label = gtk_bin_get_child(GTK_BIN(row));
-        g_object_ref(G_OBJECT(label));
-        gtk_widget_destroy(GTK_WIDGET(row));
-        gtk_widget_show(label);
-        // Add to UI selected language list box
-        gtk_list_box_insert(selected, label, -1);
+void
+audio_remove_lang_iter(GtkTreeModel *tm, GtkTreeIter *iter,
+                       signal_user_data_t *ud)
+{
+    GtkTreeView      * avail;
+    GtkTreeStore     * avail_ts;
+    GtkTreeIter        pos, sibling;
+    char             * lang;
+    int                index;
+    GtkTreePath      * tp  = gtk_tree_model_get_path(tm, iter);
+    int              * ind = gtk_tree_path_get_indices(tp);
+    int                row = ind[0];
+    GhbValue         * alang_list;
+    GtkTreeSelection * tsel;
 
-        // Add to preset language list
-        idx = (intptr_t)g_object_get_data(G_OBJECT(label), "lang_idx");
-        lang = ghb_iso639_lookup_by_int(idx);
-        glang = ghb_string_value_new(lang->iso639_2);
-        alang_list = ghb_dict_get_value(ud->settings, "AudioLanguageList");
-        ghb_array_append(alang_list, glang);
-        ghb_clear_presets_selection(ud);
+    gtk_tree_path_free(tp);
+    avail    = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_avail_lang"));
+    avail_ts = GTK_TREE_STORE(gtk_tree_view_get_model(avail));
+    tsel     = gtk_tree_view_get_selection(avail);
+
+    // Add to UI available language list box
+    gtk_tree_model_get(tm, iter, 0, &lang, 1, &index, -1);
+    if (ghb_find_lang_row(GTK_TREE_MODEL(avail_ts), &sibling, index))
+    {
+        gtk_tree_store_insert_before(avail_ts, &pos, NULL, &sibling);
+    }
+    else
+    {
+        gtk_tree_store_append(avail_ts, &pos, NULL);
+    }
+    gtk_tree_store_set(avail_ts, &pos, 0, lang, 1, index, -1);
+    g_free(lang);
+
+    // Select the item added to the available list and make it
+    // visible in the scrolled window
+    tp = gtk_tree_model_get_path(GTK_TREE_MODEL(avail_ts), &pos);
+    gtk_tree_selection_select_iter(tsel, &pos);
+    gtk_tree_view_scroll_to_cell(avail, tp, NULL, FALSE, 0, 0);
+    gtk_tree_path_free(tp);
+
+    // Remove from UI selected language list box
+    gtk_tree_store_remove(GTK_TREE_STORE(tm), iter);
+
+    // Remove from preset language list
+    alang_list = ghb_dict_get_value(ud->settings, "AudioLanguageList");
+    ghb_array_remove(alang_list, row);
+    ghb_clear_presets_selection(ud);
+}
+
+G_MODULE_EXPORT void
+audio_selected_lang_activated_cb(GtkTreeView *tv, GtkTreePath *tp,
+                                 GtkTreeViewColumn *column,
+                                 signal_user_data_t *ud)
+{
+    GtkTreeIter    iter;
+    GtkTreeModel * tm = gtk_tree_view_get_model(tv);
+
+    if (gtk_tree_model_get_iter(tm, &iter, tp))
+    {
+        audio_remove_lang_iter(tm, &iter, ud);
     }
 }
 
 G_MODULE_EXPORT void
 audio_remove_lang_clicked_cb(GtkWidget *widget, signal_user_data_t *ud)
 {
+    GtkTreeView      * selected;
+    GtkTreeModel     * selected_tm;
+    GtkTreeSelection * tsel;
+    GtkTreeIter        iter;
 
-    GtkListBox *avail, *selected;
-    GtkListBoxRow *row;
-    GtkWidget *label;
-
-    avail = GTK_LIST_BOX(GHB_WIDGET(ud->builder, "audio_avail_lang"));
-    selected = GTK_LIST_BOX(GHB_WIDGET(ud->builder, "audio_selected_lang"));
-    row = gtk_list_box_get_selected_row(selected);
-    if (row != NULL)
+    selected    = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_selected_lang"));
+    selected_tm = gtk_tree_view_get_model(selected);
+    tsel        = gtk_tree_view_get_selection(selected);
+    if (gtk_tree_selection_get_selected(tsel, NULL, &iter))
     {
-        gint index;
-        GhbValue *alang_list;
-
-        index = gtk_list_box_row_get_index(row);
-
-        // Remove from UI selected language list box
-        label = gtk_bin_get_child(GTK_BIN(row));
-        g_object_ref(G_OBJECT(label));
-        int idx = (intptr_t)g_object_get_data(G_OBJECT(label), "lang_idx");
-        gtk_widget_destroy(GTK_WIDGET(row));
-        gtk_widget_show(label);
-        // Add to UI available language list box
-        gtk_list_box_insert(avail, label, idx);
-
-        // Remove from preset language list
-        alang_list = ghb_dict_get_value(ud->settings, "AudioLanguageList");
-        ghb_array_remove(alang_list, index);
-        ghb_clear_presets_selection(ud);
+        audio_remove_lang_iter(selected_tm, &iter, ud);
     }
 }
 
@@ -2310,54 +2399,73 @@ audio_def_encode_setting_changed_cb(GtkWidget *widget, signal_user_data_t *ud)
     ghb_clear_presets_selection(ud);
 }
 
-GtkListBoxRow* ghb_find_lang_row(GtkListBox *list_box, int lang_idx)
+gboolean ghb_find_lang_row(GtkTreeModel *model, GtkTreeIter *iter, int lang_idx)
 {
-    GList *list, *link;
-    GtkListBoxRow *result = NULL;
-
-    list = link = gtk_container_get_children(GTK_CONTAINER(list_box));
-    while (link != NULL)
+    if (gtk_tree_model_get_iter_first(model, iter))
     {
-        GtkListBoxRow *row = (GtkListBoxRow*)link->data;
-        GtkWidget *label = gtk_bin_get_child(GTK_BIN(row));
-        int idx = (intptr_t)g_object_get_data(G_OBJECT(label), "lang_idx");
-        if (idx == lang_idx)
+        do
         {
-            result = row;
-            break;
-        }
-        link = link->next;
+            gint          index;
+
+            gtk_tree_model_get(model, iter, 1, &index, -1);
+            if (index >= lang_idx)
+            {
+                return TRUE;
+            }
+        } while (gtk_tree_model_iter_next(model, iter));
     }
-    g_list_free(list);
-
-    return result;
-}
-
-static void audio_def_lang_list_clear_cb(GtkWidget *row, gpointer data)
-{
-    GtkListBox *avail = (GtkListBox*)data;
-    GtkWidget *label = gtk_bin_get_child(GTK_BIN(row));
-    g_object_ref(G_OBJECT(label));
-    gtk_widget_destroy(GTK_WIDGET(row));
-    gtk_widget_show(label);
-    int idx = (intptr_t)g_object_get_data(G_OBJECT(label), "lang_idx");
-    gtk_list_box_insert(avail, label, idx);
+    return FALSE;
 }
 
 static void
 audio_def_selected_lang_list_clear(signal_user_data_t *ud)
 {
-    GtkListBox *avail, *selected;
-    avail = GTK_LIST_BOX(GHB_WIDGET(ud->builder, "audio_avail_lang"));
-    selected = GTK_LIST_BOX(GHB_WIDGET(ud->builder, "audio_selected_lang"));
-    gtk_container_foreach(GTK_CONTAINER(selected),
-                          audio_def_lang_list_clear_cb, (gpointer)avail);
+    GtkTreeView  * tv;
+    GtkTreeModel * selected_tm;
+    GtkTreeStore * avail_ts;
+    GtkTreeIter    iter;
+
+    tv          = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_avail_lang"));
+    avail_ts    = GTK_TREE_STORE(gtk_tree_view_get_model(tv));
+    tv          = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_selected_lang"));
+    selected_tm = gtk_tree_view_get_model(tv);
+    if (gtk_tree_model_get_iter_first(selected_tm, &iter))
+    {
+        do
+        {
+            gchar       * lang;
+            gint          index;
+            GtkTreeIter   pos, sibling;
+
+            gtk_tree_model_get(selected_tm, &iter, 0, &lang, 1, &index, -1);
+            if (ghb_find_lang_row(GTK_TREE_MODEL(avail_ts), &sibling, index))
+            {
+                gtk_tree_store_insert_before(avail_ts, &pos, NULL, &sibling);
+            }
+            else
+            {
+                gtk_tree_store_append(avail_ts, &pos, NULL);
+            }
+            gtk_tree_store_set(avail_ts, &pos, 0, lang, 1, index, -1);
+            g_free(lang);
+        } while (gtk_tree_model_iter_next(selected_tm, &iter));
+    }
+    gtk_tree_store_clear(GTK_TREE_STORE(selected_tm));
 }
 
 static void
 audio_def_lang_list_init(signal_user_data_t *ud)
 {
-    GhbValue *lang_list;
+    GhbValue     * lang_list;
+    GtkTreeView  * tv;
+    GtkTreeModel * avail;
+    GtkTreeStore * selected;
+    int            ii, count;
+
+    tv       = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_avail_lang"));
+    avail    = gtk_tree_view_get_model(tv);
+    tv       = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_selected_lang"));
+    selected = GTK_TREE_STORE(gtk_tree_view_get_model(tv));
 
     // Clear selected languages.
     audio_def_selected_lang_list_clear(ud);
@@ -2369,25 +2477,24 @@ audio_def_lang_list_init(signal_user_data_t *ud)
         ghb_dict_set(ud->settings, "AudioLanguageList", lang_list);
     }
 
-    int ii, count;
     count = ghb_array_len(lang_list);
     for (ii = 0; ii < count; )
     {
-        GhbValue *lang_val = ghb_array_get(lang_list, ii);
-        int idx = ghb_lookup_lang(lang_val);
+        GhbValue    * lang_val = ghb_array_get(lang_list, ii);
+        int           idx      = ghb_lookup_lang(lang_val);
+        GtkTreeIter   iter;
 
-        GtkListBox *avail, *selected;
-        GtkListBoxRow *row;
-        avail = GTK_LIST_BOX(GHB_WIDGET(ud->builder, "audio_avail_lang"));
-        selected = GTK_LIST_BOX(GHB_WIDGET(ud->builder, "audio_selected_lang"));
-        row = ghb_find_lang_row(avail, idx);
-        if (row)
+        if (ghb_find_lang_row(avail, &iter, idx))
         {
-            GtkWidget *label = gtk_bin_get_child(GTK_BIN(row));
-            g_object_ref(G_OBJECT(label));
-            gtk_widget_destroy(GTK_WIDGET(row));
-            gtk_widget_show(label);
-            gtk_list_box_insert(selected, label, -1);
+            gchar       * lang;
+            gint          index;
+            GtkTreeIter   pos;
+
+            gtk_tree_model_get(avail, &iter, 0, &lang, 1, &index, -1);
+            gtk_tree_store_append(selected, &pos, NULL);
+            gtk_tree_store_set(selected, &pos, 0, lang, 1, index, -1);
+            g_free(lang);
+            gtk_tree_store_remove(GTK_TREE_STORE(avail), &iter);
             ii++;
         }
         else
@@ -2440,8 +2547,38 @@ void ghb_audio_defaults_to_ui(signal_user_data_t *ud)
 
 void ghb_init_audio_defaults_ui(signal_user_data_t *ud)
 {
-    GtkListBox *list_box;
+    GtkTreeView * tv;
 
-    list_box = GTK_LIST_BOX(GHB_WIDGET(ud->builder, "audio_avail_lang"));
-    ghb_init_lang_list_box(list_box);
+    tv = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_avail_lang"));
+    ghb_init_lang_list(tv, ud);
+    tv = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "audio_selected_lang"));
+    ghb_init_lang_list_model(tv);
+}
+
+G_MODULE_EXPORT void
+audio_list_toggled_cb(GtkWidget *widget, signal_user_data_t *ud)
+{
+    gboolean active = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+    GtkToggleButton * selection = GTK_TOGGLE_BUTTON(GHB_WIDGET(ud->builder,
+                                                    "audio_selection_toggle"));
+    gtk_toggle_button_set_active(selection, !active);
+
+    GtkStack  * stack;
+    GtkWidget * tab;
+
+    stack = GTK_STACK(GHB_WIDGET(ud->builder, "AudioStack"));
+    if (active)
+        tab = GHB_WIDGET(ud->builder, "audio_list_tab");
+    else
+        tab = GHB_WIDGET(ud->builder, "audio_selection_tab");
+    gtk_stack_set_visible_child(stack, tab);
+}
+
+G_MODULE_EXPORT void
+audio_selection_toggled_cb(GtkWidget *widget, signal_user_data_t *ud)
+{
+    gboolean active = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+    GtkToggleButton * list = GTK_TOGGLE_BUTTON(GHB_WIDGET(ud->builder,
+                                                    "audio_list_toggle"));
+    gtk_toggle_button_set_active(list, !active);
 }

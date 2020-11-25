@@ -11,7 +11,7 @@ namespace HandBrakeWPF.Factories
 {
     using Caliburn.Micro;
 
-    using HandBrake.ApplicationServices.Model;
+    using HandBrake.Interop.Model;
 
     using HandBrakeWPF.Services.Interfaces;
 
@@ -34,18 +34,12 @@ namespace HandBrakeWPF.Factories
         public static HBConfiguration Create()
         {
             HBConfiguration config = new HBConfiguration
-                                         {
-                                             IsDvdNavDisabled = UserSettingService.GetUserSetting<bool>(UserSettingConstants.DisableLibDvdNav), 
-                                             DisableQuickSyncDecoding = UserSettingService.GetUserSetting<bool>(UserSettingConstants.DisableQuickSyncDecoding), 
-                                             UseQSVDecodeForNonQSVEnc = UserSettingService.GetUserSetting<bool>(UserSettingConstants.UseQSVDecodeForNonQSVEnc),
-                                             ScalingMode = UserSettingService.GetUserSetting<VideoScaler>(UserSettingConstants.ScalingMode), 
-                                             PreviewScanCount = UserSettingService.GetUserSetting<int>(UserSettingConstants.PreviewScanCount), 
-                                             Verbosity = UserSettingService.GetUserSetting<int>(UserSettingConstants.Verbosity), 
-                                             MinScanDuration = UserSettingService.GetUserSetting<int>(UserSettingConstants.MinScanDuration), 
-                                             SaveLogToCopyDirectory = UserSettingService.GetUserSetting<bool>(UserSettingConstants.SaveLogToCopyDirectory), 
-                                             SaveLogWithVideo = UserSettingService.GetUserSetting<bool>(UserSettingConstants.SaveLogWithVideo), 
-                                             SaveLogCopyDirectory = UserSettingService.GetUserSetting<string>(UserSettingConstants.SaveLogCopyDirectory), 
-                                         };
+            {
+                PreviewScanCount = UserSettingService.GetUserSetting<int>(UserSettingConstants.PreviewScanCount),
+                EnableQuickSyncDecoding = UserSettingService.GetUserSetting<bool>(UserSettingConstants.EnableQuickSyncDecoding),
+                UseQSVDecodeForNonQSVEnc = UserSettingService.GetUserSetting<bool>(UserSettingConstants.UseQSVDecodeForNonQSVEnc),
+                EnableQsvLowPower = UserSettingService.GetUserSetting<bool>(UserSettingConstants.EnableQuickSyncLowPower)
+            };
 
             return config;
         }

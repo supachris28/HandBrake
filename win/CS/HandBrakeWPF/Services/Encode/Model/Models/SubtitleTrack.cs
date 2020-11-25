@@ -11,14 +11,15 @@ namespace HandBrakeWPF.Services.Encode.Model.Models
 {
     using System;
 
-    using HandBrake.ApplicationServices.Utilities;
+    using Caliburn.Micro;
+
+    using HandBrake.Interop.Utilities;
 
     using HandBrakeWPF.Services.Scan.Model;
-    using HandBrakeWPF.Utilities;
 
-    /// <summary>
-    /// Subtitle Information
-    /// </summary>
+    using Newtonsoft.Json;
+
+    [JsonObject(MemberSerialization.OptOut)]
     public class SubtitleTrack : PropertyChangedBase
     {
         #region Constants and Fields
@@ -49,6 +50,8 @@ namespace HandBrakeWPF.Services.Encode.Model.Models
         private bool forced;
 
         private string srtLang;
+
+        private string name;
 
         #endregion
 
@@ -81,6 +84,7 @@ namespace HandBrakeWPF.Services.Encode.Model.Models
             this.SrtPath = subtitle.SrtPath;
             this.SubtitleType = subtitle.SubtitleType;
             this.SourceTrack = subtitle.SourceTrack;
+            this.Name = subtitle.Name;
         }
 
         #endregion
@@ -169,11 +173,27 @@ namespace HandBrakeWPF.Services.Encode.Model.Models
                 this.NotifyOfPropertyChange(() => this.SourceTrack);
                 if (this.sourceTrack != null)
                 {
-                    this.Track = this.sourceTrack.ToString();
+                    this.SubtitleType = this.sourceTrack.SubtitleType;
                 }
-
+                
+                this.NotifyOfPropertyChange(() => this.SubtitleType);
                 this.NotifyOfPropertyChange(() => this.CanBeBurned);
                 this.NotifyOfPropertyChange(() => this.CanBeForced);
+
+                if (this.Forced && !this.CanBeForced)
+                {
+                    this.Forced = false;
+                }
+
+                if (this.Burned && !this.CanBeBurned)
+                {
+                    this.Forced = false;
+                }
+
+                if (this.sourceTrack != null)
+                {
+                    this.Name = !string.IsNullOrEmpty(this.sourceTrack.Name) ? this.sourceTrack.Name : string.Empty;
+                }
             }
         }
 
@@ -236,11 +256,16 @@ namespace HandBrakeWPF.Services.Encode.Model.Models
         /// </summary>
         public SubtitleType SubtitleType { get; set; }
 
-        /// <summary>
-        ///   Gets or sets Track.
-        /// </summary>
-        [Obsolete("Use SourceTrack Instead")]
-        public string Track { get; set; }
+        public string Name
+        {
+            get => this.name;
+            set
+            {
+                if (value == this.name) return;
+                this.name = value;
+                this.NotifyOfPropertyChange(() => this.Name);
+            }
+        }
 
         #endregion
 
@@ -290,6 +315,11 @@ namespace HandBrakeWPF.Services.Encode.Model.Models
             {
                 return this.SrtFileName != "-" && this.SrtFileName != null;
             }
+        }
+
+        public override string ToString()
+        {
+            return string.Format("Subtitle Track: Title {0}", this.SrtFileName ?? this.SourceTrack.ToString());
         }
     }
 }

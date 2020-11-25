@@ -1,14 +1,13 @@
 /* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
 /*
  * presets.c
- * Copyright (C) John Stebbins 2008-2017 <stebbins@stebbins>
+ * Copyright (C) John Stebbins 2008-2020 <stebbins@stebbins>
  *
  * presets.c is free software.
  *
  * You may redistribute it and/or modify it under the terms of the
- * GNU General Public License, as published by the Free Software
- * Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * GNU General Public License version 2, as published by the Free Software
+ * Foundation.
  *
  * presets.c is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -31,7 +30,7 @@
 #include <glib/gi18n.h>
 #include <string.h>
 #include "ghbcompat.h"
-#include "hb.h"
+#include "handbrake/handbrake.h"
 #include "settings.h"
 #include "callbacks.h"
 #include "audiohandler.h"
@@ -40,17 +39,10 @@
 #include "resources.h"
 #include "presets.h"
 #include "values.h"
-#include "lang.h"
+#include "handbrake/lang.h"
 #include "videohandler.h"
 
 #define MAX_NESTED_PRESET 3
-
-enum
-{
-    PRESETS_INVALID = -1,
-    PRESETS_BUILTIN = 0,
-    PRESETS_CUSTOM
-};
 
 static GhbValue *prefsDict = NULL;
 static gboolean prefs_modified = FALSE;
@@ -151,33 +143,6 @@ dump_preset_indices(const gchar *msg, hb_preset_index_t *path)
 }
 #endif
 
-static gint
-preset_tree_depth(GhbValue *dict)
-{
-    if (ghb_dict_get_bool(dict, "Folder"))
-    {
-        gint      depth = 0;
-        gint      count, ii;
-        GhbValue *presets;
-
-        presets = ghb_dict_get(dict, "ChildrenArray");
-        count   = ghb_array_len(presets);
-        for (ii = 0; ii < count; ii++)
-        {
-            gint tmp;
-
-            dict  = ghb_array_get(presets, ii);
-            tmp   = preset_tree_depth(dict);
-            depth = MAX(depth, tmp);
-        }
-        return depth + 1;
-    }
-    else
-    {
-        return 1;
-    }
-}
-
 void
 ghb_presets_list_show_default(signal_user_data_t *ud)
 {
@@ -274,7 +239,7 @@ preset_is_folder(hb_preset_index_t *path)
 void
 ghb_preset_to_settings(GhbValue *settings, GhbValue *preset)
 {
-    // Remove troublesome x264Option
+    // Remove legacy x264Option
     ghb_dict_remove(settings, "x264Option");
 
     // Initialize defaults
@@ -299,6 +264,8 @@ ghb_preset_to_settings(GhbValue *settings, GhbValue *preset)
 
     autoscale = uses_pic != 1 || (width == 0 && height == 0);
     ghb_dict_set_bool(settings, "autoscale", autoscale);
+    ghb_dict_set_int(settings, "PictureWidthEnable", !autoscale);
+    ghb_dict_set_int(settings, "PictureHeightEnable", !autoscale);
 
     gint vqtype;
 
@@ -348,21 +315,6 @@ ghb_preset_to_settings(GhbValue *settings, GhbValue *preset)
         ghb_dict_set_bool(settings, "VideoFramerateCFR", FALSE);
         ghb_dict_set_bool(settings, "VideoFrameratePFR", FALSE);
         ghb_dict_set_bool(settings, "VideoFramerateVFR", TRUE);
-    }
-
-    if (ghb_dict_get_bool(settings, "x264UseAdvancedOptions"))
-    {
-        // Force preset/tune/profile/level/opts to conform to option string
-        ghb_dict_set_string(settings, "VideoPreset", "medium");
-        ghb_dict_set_string(settings, "VideoTune", "none");
-        ghb_dict_set_string(settings, "VideoProfile", "auto");
-        ghb_dict_set_string(settings, "VideoLevel", "auto");
-        ghb_dict_set(settings, "VideoOptionExtra", ghb_value_dup(
-            ghb_dict_get_value(settings, "x264Option")));
-    }
-    else
-    {
-        ghb_dict_remove(settings, "x264Option");
     }
 
     int                 encoder;
@@ -531,8 +483,83 @@ ghb_settings_to_ui(signal_user_data_t *ud, GhbValue *dict)
     ghb_value_free(&tmp);
 }
 
+char*
+preset_get_fullname(hb_preset_index_t *path, const char * sep, gboolean escape)
+{
+    int                ii;
+    GString           *gstr;
+    hb_preset_index_t *tmp;
+    GhbValue          *dict;
+
+    gstr = g_string_new("");
+    tmp  = hb_preset_index_dup(path);
+    for (ii = 1; ii <= path->depth; ii++)
+    {
+        const char *name;
+        tmp->depth = ii;
+        dict = hb_preset_get(tmp);
+        if (dict == NULL)
+        {
+            break;
+        }
+        name = ghb_dict_get_string(dict, "PresetName");
+        if (name != NULL)
+        {
+            g_string_append(gstr, sep);
+            if (escape)
+            {
+                char * esc = g_markup_escape_text(name, -1);
+                g_string_append(gstr, esc);
+                g_free(esc);
+            }
+            else
+            {
+                g_string_append(gstr, name);
+            }
+        }
+    }
+    free(tmp);
+    char *str = g_string_free(gstr, FALSE);
+    return str;
+}
+
 static void
-select_preset2(GtkBuilder *builder, hb_preset_index_t *path)
+set_preset_menu_button_label(signal_user_data_t *ud, hb_preset_index_t *path)
+{
+    char              * fullname, * text;
+    const char        * description;
+    GtkLabel          * label;
+    GtkWidget         * widget;
+    GhbValue          * dict;
+    int                 type;
+
+    dict = hb_preset_get(path);
+    type = ghb_dict_get_int(dict, "Type");
+    fullname = preset_get_fullname(path, " <span alpha=\"70%\">></span> ", TRUE);
+    label = GTK_LABEL(GHB_WIDGET(ud->builder, "presets_menu_button_label"));
+    text = g_strdup_printf("%s%s", type == HB_PRESET_TYPE_CUSTOM ?
+                                   "Custom" : "Official", fullname);
+    gtk_label_set_markup(label, text);
+    free(fullname);
+    free(text);
+
+    description = ghb_dict_get_string(dict, "PresetDescription");
+    widget = GHB_WIDGET(ud->builder, "presets_menu_button");
+    gtk_widget_set_tooltip_text(widget, description);
+}
+
+void
+ghb_preset_menu_button_refresh(signal_user_data_t *ud,
+                               const char *fullname, int type)
+{
+    hb_preset_index_t * path;
+
+    path = hb_preset_search_index(fullname, 0, type);
+    set_preset_menu_button_label(ud, path);
+}
+
+static void
+select_preset2(signal_user_data_t *ud, hb_preset_index_t *path)
 {
     GtkTreeView      *treeview;
     GtkTreeSelection *selection;
@@ -543,7 +570,7 @@ select_preset2(GtkBuilder *builder, hb_preset_index_t *path)
     if (path == NULL || path->depth == 0)
         return;
 
-    treeview  = GTK_TREE_VIEW(GHB_WIDGET(builder, "presets_list"));
+    treeview  = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "presets_list"));
     selection = gtk_tree_view_get_selection (treeview);
     store     = gtk_tree_view_get_model (treeview);
     treepath  = ghb_tree_path_new_from_index(path);
@@ -563,39 +590,64 @@ select_preset2(GtkBuilder *builder, hb_preset_index_t *path)
         gtk_tree_view_scroll_to_cell(treeview, treepath, NULL, FALSE, 0, 0);
         gtk_tree_path_free(treepath);
     }
+    set_preset_menu_button_label(ud, path);
+
+    int type = preset_get_type(path);
+    GSimpleAction * action;
+
+    action = G_SIMPLE_ACTION(g_action_map_lookup_action(
+                             G_ACTION_MAP(ud->app), "preset-rename"));
+    g_simple_action_set_enabled(action, type == HB_PRESET_TYPE_CUSTOM);
+    action = G_SIMPLE_ACTION(g_action_map_lookup_action(
+                             G_ACTION_MAP(ud->app), "preset-save"));
+    g_simple_action_set_enabled(action, type == HB_PRESET_TYPE_CUSTOM);
 }
 
 void
-ghb_select_preset(GtkBuilder *builder, const char *name)
+ghb_select_preset(signal_user_data_t *ud, const char *name, int type)
 {
     hb_preset_index_t *path;
 
-    path = hb_preset_search_index(name, 1);
+    path = hb_preset_search_index(name, 1, type);
     if (path != NULL)
     {
-        select_preset2(builder, path);
+        select_preset2(ud, path);
         free(path);
     }
 }
 
 void
-ghb_select_default_preset(GtkBuilder *builder)
+ghb_select_default_preset(signal_user_data_t *ud)
 {
     hb_preset_index_t *path;
 
     path = hb_presets_get_default_index();
+    if (path == NULL || path->depth == 0)
+    {
+        // No default set, find original "default" preset
+        g_free(path);
+        path = hb_preset_search_index("Fast 1080p30", 1, HB_PRESET_TYPE_ALL);
+    }
+    if (path == NULL || path->depth == 0)
+    {
+        int index[2] = {0, 0};
+
+        // Could not find original default, try first available preset
+        g_free(path);
+        path = hb_preset_index_init(index, 2);
+    }
     if (path != NULL)
     {
-        select_preset2(builder, path);
+        select_preset2(ud, path);
         g_free(path);
     }
 }
 
-gchar*
+gchar *
 ghb_get_user_config_dir(gchar *subdir)
 {
-    const gchar *dir;
-    gchar       *config;
+    const gchar * dir, * ghb = "ghb";
+    gchar       * config;
 
     if (override_user_config_dir != NULL)
     {
@@ -605,19 +657,20 @@ ghb_get_user_config_dir(gchar *subdir)
     {
         dir = g_get_user_config_dir();
     }
-    if (!g_file_test(dir, G_FILE_TEST_IS_DIR))
+    if (dir == NULL || !g_file_test(dir, G_FILE_TEST_IS_DIR))
     {
-        dir    = g_get_home_dir();
-        config = g_strdup_printf ("%s/.ghb", dir);
-        if (!g_file_test(config, G_FILE_TEST_IS_DIR))
-            g_mkdir (config, 0755);
+        dir = g_get_home_dir();
+        ghb = ".ghb";
     }
-    else
+    if (dir == NULL || !g_file_test(dir, G_FILE_TEST_IS_DIR))
     {
-        config = g_strdup_printf ("%s/ghb", dir);
-        if (!g_file_test(config, G_FILE_TEST_IS_DIR))
-            g_mkdir (config, 0755);
+        // Last ditch, use CWD
+        dir = "./";
+        ghb = ".ghb";
     }
+    config = g_strdup_printf("%s/%s", dir, ghb);
+    if (!g_file_test(config, G_FILE_TEST_IS_DIR))
+        g_mkdir (config, 0755);
     if (subdir)
     {
         gchar **split;
@@ -790,11 +843,17 @@ ghb_write_pid_file()
     path   = g_strdup_printf ("%s/ghb.pid.%d", config, pid);
     fp     = g_fopen(path, "w");
 
-    fprintf(fp, "%d\n", pid);
-    fclose(fp);
+    if (fp != NULL)
+    {
+        fprintf(fp, "%d\n", pid);
+        fclose(fp);
+    }
 
     fd = open(path, O_RDWR|O_CREAT, S_IRUSR|S_IWUSR);
-    lockf(fd, F_TLOCK, 0);
+    if (fd >= 0)
+    {
+        lockf(fd, F_TLOCK, 0);
+    }
 
     g_free(config);
     g_free(path);
@@ -819,16 +878,9 @@ ghb_find_pid_file()
             if (strncmp(file, "ghb.pid.", 8) == 0)
             {
                 gchar *path;
-                pid_t  my_pid;
                 int    pid;
 
                 sscanf(file, "ghb.pid.%d", &pid);
-                my_pid = getpid();
-                if (my_pid == pid)
-                {
-                    file = g_dir_read_name(gdir);
-                    continue;
-                }
                 path = g_strdup_printf("%s/%s", config, file);
 
 #if !defined(_WIN32)
@@ -1029,6 +1081,7 @@ ghb_prefs_load(signal_user_data_t *ud)
 #endif
         store_prefs();
     }
+    ghb_dict_remove(dict, "show_presets");
 }
 
 void
@@ -1054,7 +1107,7 @@ get_preset_color(gint type, gboolean is_folder)
 {
     const gchar *color;
 
-    if (type == PRESETS_CUSTOM)
+    if (type == HB_PRESET_TYPE_CUSTOM)
     {
         color = "DimGray";
         if (is_folder)
@@ -1071,6 +1124,243 @@ get_preset_color(gint type, gboolean is_folder)
         }
     }
     return color;
+}
+
+hb_preset_index_t *
+get_selected_path(signal_user_data_t *ud)
+{
+    GtkTreeView      *treeview;
+    GtkTreeSelection *selection;
+    GtkTreeModel     *store;
+    GtkTreeIter       iter;
+
+    treeview  = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "presets_list"));
+    selection = gtk_tree_view_get_selection(treeview);
+    if (gtk_tree_selection_get_selected(selection, &store, &iter))
+    {
+        return ghb_tree_get_index(store, &iter);
+    }
+    return NULL;
+}
+
+G_MODULE_EXPORT gboolean
+presets_window_delete_cb(
+    GtkWidget *xwidget,
+#if !GTK_CHECK_VERSION(3, 90, 0)
+    GdkEvent *event,
+#endif
+    signal_user_data_t *ud)
+{
+    GSimpleAction * action;
+    GVariant      * state = g_variant_new_boolean(FALSE);
+
+    action = G_SIMPLE_ACTION(g_action_map_lookup_action(
+                             G_ACTION_MAP(ud->app), "show-presets"));
+    g_action_change_state(G_ACTION(action), state);
+    return TRUE;
+}
+
+G_MODULE_EXPORT void
+presets_sz_alloc_cb(
+    GtkWidget *widget,
+#if GTK_CHECK_VERSION(3, 90, 0)
+    int width,
+    int height,
+    int baseline,
+#else
+    GdkRectangle *rect,
+#endif
+    signal_user_data_t *ud)
+{
+    if (gtk_widget_get_visible(widget))
+    {
+        gint w, h, ww, wh;
+        w = ghb_dict_get_int(ud->prefs, "presets_window_width");
+        h = ghb_dict_get_int(ud->prefs, "presets_window_height");
+
+        gtk_window_get_size(GTK_WINDOW(widget), &ww, &wh);
+        if ( w != ww || h != wh )
+        {
+            ghb_dict_set_int(ud->prefs, "presets_window_width", ww);
+            ghb_dict_set_int(ud->prefs, "presets_window_height", wh);
+            ghb_pref_set(ud->prefs, "presets_window_width");
+            ghb_pref_set(ud->prefs, "presets_window_height");
+            ghb_prefs_store();
+        }
+    }
+}
+
+G_MODULE_EXPORT void
+preset_select_action_cb(GSimpleAction *action, GVariant *param,
+                        signal_user_data_t *ud)
+{
+    const char * preset_path = g_variant_get_string(param, NULL);
+    int          type        = preset_path[0] - '0';
+
+    ghb_select_preset(ud, &preset_path[1], type);
+}
+
+G_MODULE_EXPORT void
+preset_reload_action_cb(GSimpleAction *action, GVariant *param,
+                        signal_user_data_t *ud)
+{
+    const char * preset_path;
+    int          type;
+
+    type         = ghb_dict_get_int(ud->settings, "Type");
+    preset_path  = ghb_dict_get_string(ud->settings, "PresetFullName");
+    if (preset_path != NULL)
+    {
+        ghb_select_preset(ud, preset_path, type);
+    }
+}
+
+void
+ghb_presets_menu_init(signal_user_data_t *ud)
+{
+    GMenu              * menu = g_menu_new();
+    hb_preset_index_t  * path;
+    GhbValue           * presets;
+    int                  menu_count, submenu_count, type, ii, jj, kk;
+    char              ** official_names;
+
+    // Add official presets
+    path   = hb_preset_index_init(NULL, 0);
+    presets = hb_presets_get_folder_children(path);
+    if (presets == NULL)
+    {
+        g_warning(_("ghb_presets_menu_init: Failed to find presets folder."));
+        g_free(path);
+        return;
+    }
+
+    menu_count = ghb_array_len(presets);
+    // Menus can't contain the same name twice.  Since our preset list
+    // allows official and custom preset categories with the same name
+    // I must modify one of them when duplicates exist :(
+    official_names = calloc(menu_count + 1, sizeof(char*));
+    kk = 0;
+    path->depth++;
+    // Process Official Presets in first pass, then Custom Presets
+    for (type = 0; type < 2; type++)
+    {
+        GMenu * section = g_menu_new();
+        for (ii = 0; ii < menu_count; ii++)
+        {
+            GhbValue    * dict;
+            const gchar * folder_name;
+            gint          folder_type;
+            gboolean      is_folder;
+            GhbValue    * folder;
+            GString     * folder_str;
+            char        * menu_item_name;
+
+            path->index[path->depth-1] = ii;
+
+            dict        = ghb_array_get(presets, ii);
+            folder_name = ghb_dict_get_string(dict, "PresetName");
+            folder_type = ghb_dict_get_int(dict, "Type");
+            is_folder   = ghb_dict_get_bool(dict, "Folder");
+
+            if (folder_type != type)
+            {
+                continue;
+            }
+
+            if (type == HB_PRESET_TYPE_OFFICIAL)
+            {
+                // Add folder name to list of official names
+                official_names[kk++] = g_strdup(folder_name);
+            }
+
+            folder_str = g_string_new("");
+            g_string_append_printf(folder_str, "%d/%s",
+                                   folder_type, folder_name);
+            if (is_folder)
+            {
+                GMenu * submenu = g_menu_new();
+
+                folder = hb_presets_get_folder_children(path);
+                submenu_count = ghb_array_len(folder);
+                for (jj = 0; jj < submenu_count; jj++)
+                {
+                    const gchar * name;
+                    GString     * preset_str = g_string_new(folder_str->str);
+
+                    dict        = ghb_array_get(folder, jj);
+                    name        = ghb_dict_get_string(dict, "PresetName");
+                    type        = ghb_dict_get_int(dict, "Type");
+                    is_folder   = ghb_dict_get_bool(dict, "Folder");
+
+                    // Sanity check, Preset types must match their folder
+                    if (type != folder_type)
+                    {
+                        continue;
+                    }
+                    // Enforce 2 level limit
+                    if (is_folder)
+                    {
+                        continue;
+                    }
+                    g_string_append_printf(preset_str, "/%s", name);
+
+                    char * preset_path;
+                    char * detail_action;
+
+                    preset_path = g_string_free(preset_str, FALSE);
+                    detail_action = g_strdup_printf("app.preset-select(\"%s\")",
+                                                    preset_path);
+                    g_menu_append(submenu, name, detail_action);
+                    free(preset_path);
+                    free(detail_action);
+                }
+                if (type == HB_PRESET_TYPE_CUSTOM &&
+                    ghb_strv_contains((const char**)official_names, folder_name))
+                {
+                    menu_item_name = g_strdup_printf("My %s", folder_name);
+                }
+                else
+                {
+                    menu_item_name = g_strdup(folder_name);
+                }
+                g_menu_append_submenu(section, menu_item_name,
+                                      G_MENU_MODEL(submenu));
+                g_free(menu_item_name);
+            }
+            g_string_free(folder_str, TRUE);
+        }
+        g_menu_append_section(menu,
+                              type == HB_PRESET_TYPE_CUSTOM ?
+                              "Custom" : "Official",
+                              G_MENU_MODEL(section));
+    }
+    g_free(path);
+    g_strfreev(official_names);
+
+    GtkMenuButton * mb;
+
+    mb = GTK_MENU_BUTTON(GHB_WIDGET(ud->builder, "presets_menu_button"));
+    gtk_menu_button_set_menu_model(mb, G_MENU_MODEL(menu));
+}
+
+
+void
+ghb_presets_menu_clear(signal_user_data_t *ud)
+{
+    GtkMenuButton * mb;
+    GMenuModel    * mm;
+
+    mb = GTK_MENU_BUTTON(GHB_WIDGET(ud->builder, "presets_menu_button"));
+    mm = gtk_menu_button_get_menu_model(mb);
+    gtk_menu_button_set_menu_model(mb, NULL);
+    g_object_unref(G_OBJECT(mm));
+}
+
+void
+ghb_presets_menu_reinit(signal_user_data_t *ud)
+{
+    ghb_presets_menu_clear(ud);
+    ghb_presets_menu_init(ud);
 }
 
 void
@@ -1143,7 +1433,7 @@ ghb_presets_list_init(signal_user_data_t *ud, const hb_preset_index_t *path)
                             2, def ? 2   : 0,
                             3, color,
                             4, description,
-                            5, type == PRESETS_BUILTIN ? 0 : 1,
+                            5, type == HB_PRESET_TYPE_OFFICIAL ? 0 : 1,
                             -1);
         if (is_folder)
         {
@@ -1230,7 +1520,7 @@ presets_list_update_item(
                         2, def ? 2   : 0,
                         3, color,
                         4, description,
-                        5, type == PRESETS_BUILTIN ? 0 : 1,
+                        5, type == HB_PRESET_TYPE_OFFICIAL ? 0 : 1,
                         -1);
     if (recurse && is_folder)
     {
@@ -1295,7 +1585,7 @@ presets_list_append(signal_user_data_t *ud, const hb_preset_index_t *path)
                         2, def ? 2   : 0,
                         3, color,
                         4, description,
-                        5, type == PRESETS_BUILTIN ? 0 : 1,
+                        5, type == HB_PRESET_TYPE_OFFICIAL ? 0 : 1,
                         -1);
     if (is_folder)
     {
@@ -1402,8 +1692,8 @@ ghb_settings_to_preset(GhbValue *settings)
 
     gboolean autoscale, br, constant;
 
+    ghb_dict_remove(preset, "title");
     ghb_dict_set_bool(preset, "Default", 0);
-    ghb_dict_set_int(preset, "Type", PRESETS_CUSTOM);
     if (!ghb_dict_get_bool(preset, "PictureWidthEnable"))
     {
         ghb_dict_remove(preset, "PictureWidth");
@@ -1450,11 +1740,6 @@ ghb_settings_to_preset(GhbValue *settings)
         ghb_dict_set_string(preset, "VideoFramerateMode", "vfr");
     }
 
-    if (ghb_dict_get_int(preset, "PictureDeblock") < 5)
-    {
-        ghb_dict_set_int(preset, "PictureDeblock", 0);
-    }
-
     GhbValue *alist, *adict;
     gint count, ii;
 
@@ -1475,15 +1760,6 @@ ghb_settings_to_preset(GhbValue *settings)
     GhbValue *copy_mask = ghb_create_copy_mask(preset);
     ghb_dict_set(preset, "AudioCopyMask", copy_mask);
 
-    if (ghb_dict_get_bool(preset, "x264UseAdvancedOptions"))
-    {
-        ghb_dict_remove(preset, "VideoPreset");
-        ghb_dict_remove(preset, "VideoTune");
-        ghb_dict_remove(preset, "VideoProfile");
-        ghb_dict_remove(preset, "VideoLevel");
-        ghb_dict_remove(preset, "VideoOptionExtra");
-    }
-
     GString *str = g_string_new("");
     const char *sep = "";
     const char *tune = ghb_dict_get_string(preset, "VideoTune");
@@ -1492,14 +1768,18 @@ ghb_settings_to_preset(GhbValue *settings)
         g_string_append_printf(str, "%s", tune);
         sep = ",";
     }
-    if (ghb_dict_get_bool(preset, "x264FastDecode"))
+    int encoder = ghb_get_video_encoder(settings);
+    if (encoder & HB_VCODEC_X264_MASK)
     {
-        g_string_append_printf(str, "%s%s", sep, "fastdecode");
-        sep = ",";
-    }
-    if (ghb_dict_get_bool(preset, "x264ZeroLatency"))
-    {
-        g_string_append_printf(str, "%s%s", sep, "zerolatency");
+        if (ghb_dict_get_bool(preset, "x264FastDecode"))
+        {
+            g_string_append_printf(str, "%s%s", sep, "fastdecode");
+            sep = ",";
+        }
+        if (ghb_dict_get_bool(preset, "x264ZeroLatency"))
+        {
+            g_string_append_printf(str, "%s%s", sep, "zerolatency");
+        }
     }
     char *tunes;
     tunes = g_string_free(str, FALSE);
@@ -1589,7 +1869,7 @@ ghb_presets_load(signal_user_data_t *ud)
         {
             ghb_log("Failed to read backup presets, using defaults...");
             hb_presets_builtin_update();
-            // Don't store defaults unless the user explicitely saves
+            // Don't store defaults unless the user explicitly saves
             // a new preset.  This would overwrite the presets file
             // that was generated by a newer version of HandBrake.
         }
@@ -1604,163 +1884,104 @@ ghb_presets_load(signal_user_data_t *ud)
             store_presets();
         }
     }
+    ghb_update_ui_combo_box(ud, "PresetCategory", NULL, FALSE);
 }
 
 static void
-settings_save(signal_user_data_t *ud, hb_preset_index_t *path, const char *name)
+settings_save(signal_user_data_t *ud, const char * category,
+              const char *name, const char * desc, gboolean set_def)
 {
-    GhbValue *dict;
-    gboolean  replace = FALSE, def = FALSE;
+    GhbValue          * preset, * new_preset;
+    gboolean            def = FALSE;
+    hb_preset_index_t * folder_path, * path;
+    char              * fullname;
 
-    dict = hb_preset_get(path);
-    if (dict != NULL)
+    folder_path = hb_preset_search_index(category, 0, HB_PRESET_TYPE_CUSTOM);
+    if (folder_path->depth <= 0)
     {
-        gboolean    is_folder;
-        int         type;
-        const char *s;
-
-        def       = ghb_dict_get_bool(dict, "Default");
-        is_folder = ghb_dict_get_bool(dict, "Folder");
-        type      = ghb_dict_get_int(dict, "Type");
-        s         = ghb_dict_get_string(dict, "PresetName");
-        if (s == NULL || strcmp(s, name) || type != PRESETS_CUSTOM || is_folder)
+        GhbValue * new_folder;
+        new_folder = ghb_dict_new();
+        ghb_dict_set_string(new_folder, "PresetName", category);
+        ghb_dict_set(new_folder, "ChildrenArray", ghb_array_new());
+        ghb_dict_set_int(new_folder, "Type", HB_PRESET_TYPE_CUSTOM);
+        ghb_dict_set_bool(new_folder, "Folder", TRUE);
+        int index = hb_preset_append(folder_path, new_folder);
+        if (index >= 0)
         {
-            // Name changed or original preset was builtin or original
-            // was a folder. Don't replace it.
-            replace = FALSE;
-            path->depth--;
-            if (type != PRESETS_CUSTOM)
-            {
-                // Don't put new custom presets in a builtin folder
-                path->depth = 0;
-            }
+            folder_path->index[folder_path->depth++] = index;
+            presets_list_append(ud, folder_path);
         }
         else
         {
-            replace = TRUE;
+            ghb_log("Failed to create category (%s)...", category);
+            return;
         }
+        ghb_value_free(&new_folder);
     }
-    char * new_name = strdup(name);
-    if (!replace)
-    {
-        // We are creating a new preset.  Make sure there is not
-        // another preset in this folder that has the same name
-        int       ii, count, index = 1;
-        GhbValue *children;
 
-        children = hb_presets_get_folder_children(path);
-        count   = ghb_array_len(children);
-        do
-        {
-            for (ii = 0; ii < count; ii++)
-            {
-                GhbValue   *preset;
-                const char *s;
+    new_preset = ghb_settings_to_preset(ud->settings);
+    ghb_dict_set_int(new_preset, "Type", HB_PRESET_TYPE_CUSTOM);
+    ghb_dict_set_string(new_preset, "PresetName", name);
+    ghb_dict_set_string(new_preset, "PresetDescription", desc);
 
-                preset = ghb_array_get(children, ii);
-                s      = ghb_dict_get_string(preset, "PresetName");
-                if (s != NULL && !strcmp(s, new_name))
-                {
-                    free(new_name);
-                    new_name = g_strdup_printf("%s (%d)", name, index++);
-                    break;
-                }
-            }
-        } while (ii < count);
-    }
-    dict = ghb_settings_to_preset(ud->settings);
-    ghb_dict_set_string(dict, "PresetName", new_name);
-    free(new_name);
-    if (replace)
+    fullname = g_strdup_printf("/%s/%s", category, name);
+    path = hb_preset_search_index(fullname, 0, HB_PRESET_TYPE_CUSTOM);
+    preset = hb_preset_get(path);
+    if (preset != NULL)
     {
+        // Replacing an existing preset
+        def = ghb_dict_get_bool(preset, "Default");
+
         // If we are replacing the default preset, re-mark it as default
-        ghb_dict_set_bool(dict, "Default", def);
+        ghb_dict_set_bool(new_preset, "Default", def);
         // Already exists, update its description
-        if (hb_preset_set(path, dict) >= 0)
+        if (hb_preset_set(path, new_preset) >= 0)
         {
             presets_list_update_item(ud, path, FALSE);
         }
     }
     else
     {
-        // Append to the folder list the source came from
-        int index = hb_preset_append(path, dict);
+        // Check if the new preset is also the new default preset
+        if (set_def)
+        {
+            ghb_dict_set_bool(new_preset, "Default", set_def);
+            ghb_presets_list_clear_default(ud);
+            hb_presets_clear_default();
+        }
+
+        // Adding a new preset
+        // Append to the folder
+        int index = hb_preset_append(folder_path, new_preset);
         if (index >= 0)
         {
-            path->index[path->depth++] = index;
-            presets_list_append(ud, path);
+            folder_path->index[folder_path->depth++] = index;
+            presets_list_append(ud, folder_path);
         }
+        *path = *folder_path;
     }
-    ghb_value_free(&dict);
+
+
+    free(fullname);
+    ghb_value_free(&new_preset);
+
     store_presets();
+    ghb_presets_menu_reinit(ud);
 
     ud->dont_clear_presets = TRUE;
     // Make the new preset the selected item
-    select_preset2(ud->builder, path);
+    select_preset2(ud, path);
     ud->dont_clear_presets = FALSE;
-    return;
-}
 
-static void
-folder_save(signal_user_data_t *ud, hb_preset_index_t *path, const char *name)
-{
-    GhbValue *dict;
-
-    dict = hb_preset_get(path);
-    if (dict != NULL)
-    {
-        gboolean    is_folder;
-        int         type;
-        const char *s;
-
-        is_folder = ghb_dict_get_bool(dict, "Folder");
-        type      = ghb_dict_get_int(dict, "Type");
-        s         = ghb_dict_get_string(dict, "PresetName");
-        if (s == NULL || strcmp(s, name) || type != PRESETS_CUSTOM || !is_folder)
-        {
-            // Name changed or original preset was builtin or original
-            // was a not a folder. Don't replace it.
-            dict = NULL;
-            path->depth--;
-            if (type != PRESETS_CUSTOM)
-            {
-                // Don't put new custom presets in a builtin folder
-                path->depth = 1;
-            }
-        }
-    }
-    if (dict != NULL)
-    {
-        // Already exists, update its description
-        dict = hb_preset_get(path);
-        ghb_dict_set(dict, "PresetDescription",
-            ghb_value_dup(ghb_dict_get(ud->settings, "PresetDescription")));
-        presets_list_update_item(ud, path, FALSE);
-    }
-    else
-    {
-        dict = ghb_dict_new();
-        ghb_dict_set(dict, "PresetDescription",
-            ghb_value_dup(ghb_dict_get(ud->settings, "PresetDescription")));
-        ghb_dict_set_string(dict, "PresetName", name);
-        ghb_dict_set(dict, "ChildrenArray", ghb_array_new());
-        ghb_dict_set_int(dict, "Type", PRESETS_CUSTOM);
-        ghb_dict_set_bool(dict, "Folder", TRUE);
-        int index = hb_preset_append(path, dict);
-        if (index >= 0)
-        {
-            path->index[path->depth++] = index;
-            presets_list_append(ud, path);
-        }
-        ghb_value_free(&dict);
-    }
-    store_presets();
+    free(folder_path);
+    free(path);
 
     return;
 }
 
 G_MODULE_EXPORT void
-preset_import_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
+preset_import_action_cb(GSimpleAction *action, GVariant *param,
+                        signal_user_data_t *ud)
 {
     GtkWindow       *hb_window;
     GtkWidget       *dialog;
@@ -1829,63 +2050,59 @@ preset_import_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
 
         // Re-init the UI preset list
         ghb_presets_list_reinit(ud);
+        ghb_presets_menu_reinit(ud);
         if (index < 0)
         {
-            ghb_select_default_preset(ud->builder);
+            ghb_select_default_preset(ud);
         }
         else
         {
             hb_preset_index_t path;
             path.index[0] = index;
             path.depth = 1;
-            select_preset2(ud->builder, &path);
+            select_preset2(ud, &path);
         }
     }
     gtk_widget_destroy(dialog);
 }
 
-hb_preset_index_t *
-get_selected_path(signal_user_data_t *ud)
-{
-    GtkTreeView      *treeview;
-    GtkTreeSelection *selection;
-    GtkTreeModel     *store;
-    GtkTreeIter       iter;
-
-    treeview  = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "presets_list"));
-    selection = gtk_tree_view_get_selection(treeview);
-    if (gtk_tree_selection_get_selected(selection, &store, &iter))
-    {
-        return ghb_tree_get_index(store, &iter);
-    }
-    return NULL;
-}
-
 G_MODULE_EXPORT void
-preset_export_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
+preset_export_action_cb(GSimpleAction *action, GVariant *param,
+                        signal_user_data_t *ud)
 {
     hb_preset_index_t *path;
-    const gchar       *name;
     GtkWindow         *hb_window;
     GtkWidget         *dialog;
     GtkResponseType    response;
     const gchar       *exportDir;
     gchar             *filename;
+    GhbValue          *dict;
+    char              *preset_name;
 
     path = get_selected_path(ud);
     if (path == NULL || path->depth <= 0)
     {
+        const gchar       *name;
+        char * new_name;
+
         free(path);
-        return;
+        dict = ghb_settings_to_preset(ud->settings);
+        name = ghb_dict_get_string(dict, "PresetName");
+        new_name = g_strdup_printf("%s (modified)", name);
+        ghb_dict_set_string(dict, "PresetName", new_name);
+        free(new_name);
+    }
+    else
+    {
+        dict = hb_value_dup(hb_preset_get(path));
+        free(path);
     }
 
-    GhbValue *dict = hb_preset_get(path);
-    free(path);
     if (dict == NULL)
     {
         return;
     }
-    name = ghb_dict_get_string(dict, "PresetName");
+    preset_name = g_strdup(ghb_dict_get_string(dict, "PresetName"));
 
     hb_window = GTK_WINDOW(GHB_WIDGET(ud->builder, "hb_window"));
     dialog = gtk_file_chooser_dialog_new(_("Export Preset"), hb_window,
@@ -1899,10 +2116,16 @@ preset_export_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
     {
         exportDir = ".";
     }
-    filename = g_strdup_printf("%s.json", name);
+
+    // Clean up preset name for use as a filename.  Removing leading
+    // and trailing whitespace and filename illegal characters.
+    g_strstrip(preset_name);
+    g_strdelimit(preset_name, GHB_UNSAFE_FILENAME_CHARS, '_');
+    filename = g_strdup_printf("%s.json", preset_name);
     gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dialog), exportDir);
     gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog), filename);
     g_free(filename);
+    g_free(preset_name);
 
     response = gtk_dialog_run(GTK_DIALOG(dialog));
     gtk_widget_hide(dialog);
@@ -1925,65 +2148,143 @@ preset_export_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
         g_free(filename);
     }
     gtk_widget_destroy(dialog);
+    hb_value_free(&dict);
 }
 
 G_MODULE_EXPORT void
-presets_new_folder_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
+preset_rename_action_cb(GSimpleAction *action, GVariant *param,
+                        signal_user_data_t *ud)
 {
-    GtkWidget         *dialog;
-    GtkEntry          *entry;
-    GtkTextView       *desc;
-    GtkResponseType    response;
-    hb_preset_index_t *path;
-    const gchar       *name;
-    const gchar       *description;
+    const gchar       * name;
+    const gchar       * fullname;
+    int                 type;
+    hb_preset_index_t * path;
+    GtkWidget         * dialog;
+    GtkEntry          * entry;
+    GtkTextView       * tv;
+    GhbValue          * dict;
+    GtkResponseType     response;
 
-    path        = get_selected_path(ud);
-    name        = ghb_dict_get_string(ud->settings, "PresetName");
-    description = ghb_dict_get_string(ud->settings, "PresetDescription");
-    ghb_ui_update(ud, "FolderDescription", ghb_string_value(description));
+    name      = ghb_dict_get_string(ud->settings, "PresetName");
+    type      = ghb_dict_get_int(ud->settings, "Type");
+    fullname  = ghb_dict_get_string(ud->settings, "PresetFullName");
 
-    desc   = GTK_TEXT_VIEW(GHB_WIDGET(ud->builder, "FolderDescription"));
-    dialog = GHB_WIDGET(ud->builder, "preset_new_folder_dialog");
-    entry  = GTK_ENTRY(GHB_WIDGET(ud->builder, "FolderName"));
-    gtk_entry_set_text(entry, name);
+    if (type != HB_PRESET_TYPE_CUSTOM)
+    {
+        // Only allow renaming custom presets
+        return;
+    }
+    path = hb_preset_search_index(fullname, 0, type);
+
+    ghb_ui_update(ud, "PresetReDescription",
+                  ghb_dict_get_value(ud->settings, "PresetDescription"));
+    tv = GTK_TEXT_VIEW(GHB_WIDGET(ud->builder, "PresetReDescription"));
+
+    dialog   = GHB_WIDGET(ud->builder, "preset_rename_dialog");
+    entry    = GTK_ENTRY(GHB_WIDGET(ud->builder, "PresetReName"));
+    ghb_editable_set_text(entry, name);
+
     response = gtk_dialog_run(GTK_DIALOG(dialog));
     gtk_widget_hide(dialog);
     if (response == GTK_RESPONSE_OK)
     {
-        // save the preset
-        const gchar *name = gtk_entry_get_text(entry);
-        GhbValue *val     = ghb_widget_value(GTK_WIDGET(desc));
-        ghb_dict_set(ud->settings, "PresetDescription", ghb_value_dup(val));
-        folder_save(ud, path, name);
+        GtkTextBuffer * buffer;
+        GtkTextIter     start, end;
+        char          * desc;
+
+        // save the new name
+        name = ghb_editable_get_text(entry);
+        dict = hb_preset_get(path);
+        if (dict != NULL)
+        {
+            ghb_dict_set_string(dict, "PresetName", name);
+            store_presets();
+        }
+
+        buffer = gtk_text_view_get_buffer(tv);
+        gtk_text_buffer_get_bounds(buffer, &start, &end);
+        desc = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+        ghb_dict_set_string(ud->settings, "PresetDescription", desc);
+        free(desc);
+
+        char * full = preset_get_fullname(path, "/", FALSE);
+        ghb_dict_set_string(ud->settings, "PresetFullName", full);
+        ghb_dict_set_string(ud->settings, "PresetName", name);
+        free(full);
+        ghb_presets_menu_reinit(ud);
+        set_preset_menu_button_label(ud, path);
     }
-    free(path);
 }
 
-G_MODULE_EXPORT void
-presets_save_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
+static void preset_save_action(signal_user_data_t *ud, gboolean as)
 {
-    const gchar       *name;
-    const gchar       *fullname;
-    hb_preset_index_t *path;
-    int                width, height;
-    gboolean           autoscale;
-    GtkWidget         *dialog;
-    GtkEntry          *entry;
-    GtkTextView       *desc;
-    GtkResponseType    response;
+    const char        * category = NULL;
+    const gchar       * name;
+    const gchar       * fullname;
+    int                 type;
+    hb_preset_index_t * path;
+    int                 width, height;
+    gboolean            autoscale;
+    GtkWidget         * dialog;
+    GtkWidget         * widget;
+    GtkEntry          * entry;
+    GtkTextView       * tv;
+    GhbValue          * dict;
+    GtkResponseType     response;
 
     name      = ghb_dict_get_string(ud->settings, "PresetName");
+    type      = ghb_dict_get_int(ud->settings, "Type");
     fullname  = ghb_dict_get_string(ud->settings, "PresetFullName");
     width     = ghb_dict_get_int(ud->settings, "PictureWidth");
     height    = ghb_dict_get_int(ud->settings, "PictureHeight");
     autoscale = ghb_dict_get_bool(ud->settings, "autoscale");
 
+    ghb_ui_update(ud, "PresetSetDefault", ghb_boolean_value(FALSE));
     ghb_ui_update(ud, "PictureWidthEnable", ghb_boolean_value(!autoscale));
     ghb_ui_update(ud, "PictureHeightEnable", ghb_boolean_value(!autoscale));
 
-    path     = hb_preset_search_index(fullname, 0);
-    desc     = GTK_TEXT_VIEW(GHB_WIDGET(ud->builder, "PresetDescription"));
+    path = hb_preset_search_index(fullname, 0, type);
+
+    // Find an appropriate default category
+    if (path != NULL)
+    {
+        path->depth = 1;
+        dict        = hb_preset_get(path);
+        if (ghb_dict_get_bool(dict, "Folder"))
+        {
+            category = ghb_dict_get_string(dict, "PresetName");
+        }
+        free(path);
+    }
+    if (category == NULL)
+    {
+        // Find first custom folder
+        hb_value_t * presets;
+        int          ii, count;
+
+        presets = hb_presets_get();
+        count   = hb_value_array_len(presets);
+        for (ii = 0; ii < count; ii++)
+        {
+            dict = hb_value_array_get(presets, ii);
+            if (!ghb_dict_get_bool(dict, "Folder"))
+            {
+                continue;
+            }
+            if (ghb_dict_get_int(dict, "Type") == HB_PRESET_TYPE_CUSTOM)
+            {
+                category = ghb_dict_get_string(dict, "PresetName");
+                break;
+            }
+        }
+    }
+    if (category == NULL)
+    {
+        // Force creation of new category
+        category = "new";
+    }
+    ghb_ui_update(ud, "PresetCategory", ghb_string_value(category));
+    tv = GTK_TEXT_VIEW(GHB_WIDGET(ud->builder, "PresetDescription"));
     if (!width)
     {
         width = ghb_dict_get_int(ud->settings, "scale_width");
@@ -1997,111 +2298,254 @@ presets_save_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
 
     dialog   = GHB_WIDGET(ud->builder, "preset_save_dialog");
     entry    = GTK_ENTRY(GHB_WIDGET(ud->builder, "PresetName"));
-    gtk_entry_set_text(entry, name);
+    ghb_editable_set_text(entry, name);
+
+    widget = GHB_WIDGET(ud->builder, "PresetName");
+    gtk_widget_set_sensitive(widget, as);
+    widget = GHB_WIDGET(ud->builder, "PresetCategory");
+    gtk_widget_set_sensitive(widget, as);
+    widget = GHB_WIDGET(ud->builder, "PresetSetDefault");
+    gtk_widget_set_visible(widget, as);
+
     response = gtk_dialog_run(GTK_DIALOG(dialog));
     gtk_widget_hide(dialog);
     if (response == GTK_RESPONSE_OK)
     {
+        GtkTextBuffer * buffer;
+        GtkTextIter     start, end;
+        char          * desc;
+        gboolean        def;
+
         // save the preset
-        name = gtk_entry_get_text(entry);
-        ghb_widget_to_setting(ud->settings, GTK_WIDGET(desc));
-        settings_save(ud, path, name);
+        name = ghb_editable_get_text(entry);
+        category = ghb_dict_get_string(ud->settings, "PresetCategory");
+        if (!strcmp(category, "new"))
+        {
+            entry = GTK_ENTRY(GHB_WIDGET(ud->builder, "PresetCategoryName"));
+            category = ghb_editable_get_text(entry);
+        }
+        if (category == NULL || category[0] == 0)
+        {
+            ghb_log("Invalid empty category.");
+            return;
+        }
+        buffer = gtk_text_view_get_buffer(tv);
+        gtk_text_buffer_get_bounds(buffer, &start, &end);
+        desc = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+        def = ghb_dict_get_bool(ud->settings, "PresetSetDefault");
+        settings_save(ud, category, name, desc, def);
+        free(desc);
     }
-    free(path);
 }
 
 G_MODULE_EXPORT void
-preset_type_changed_cb(GtkWidget *widget, signal_user_data_t *ud)
+preset_save_action_cb(GSimpleAction *action, GVariant *param,
+                      signal_user_data_t *ud)
+{
+    preset_save_action(ud, FALSE);
+}
+
+G_MODULE_EXPORT void
+preset_save_as_action_cb(GSimpleAction *action, GVariant *param,
+                         signal_user_data_t *ud)
+{
+    preset_save_action(ud, TRUE);
+}
+
+static void
+preset_save_set_ok_sensitive(signal_user_data_t *ud)
+{
+    GtkEntry   * entry;
+    GtkWidget  * ok_button;
+    const char * name;
+    const char * category;
+    const char * category_name;
+    gboolean     sensitive;
+
+    ok_button = GHB_WIDGET(ud->builder, "preset_ok");
+
+    category = ghb_dict_get_string(ud->settings, "PresetCategory");
+    entry = GTK_ENTRY(GHB_WIDGET(ud->builder, "PresetName"));
+    name = ghb_editable_get_text(entry);
+    entry = GTK_ENTRY(GHB_WIDGET(ud->builder, "PresetCategoryName"));
+    category_name = ghb_editable_get_text(entry);
+
+    sensitive = name[0] && (strcmp(category, "new") || category_name[0]);
+    gtk_widget_set_sensitive(ok_button, sensitive);
+}
+
+G_MODULE_EXPORT void
+preset_category_changed_cb(GtkWidget *widget, signal_user_data_t *ud)
 {
     ghb_widget_to_setting(ud->settings, widget);
+    preset_save_set_ok_sensitive(ud);
+    ghb_check_dependency(ud, widget, NULL);
 }
 
 G_MODULE_EXPORT void
-presets_restore_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
+preset_name_changed_cb(GtkWidget *widget, signal_user_data_t *ud)
+{
+    preset_save_set_ok_sensitive(ud);
+}
+
+G_MODULE_EXPORT void
+presets_reload_action_cb(GSimpleAction *action, GVariant *param,
+                         signal_user_data_t *ud)
 {
     // Reload the builtin presets
     hb_presets_builtin_update();
     store_presets();
 
     ghb_presets_list_reinit(ud);
-    ghb_select_default_preset(ud->builder);
+    ghb_presets_menu_reinit(ud);
+    ghb_select_default_preset(ud);
 }
 
 G_MODULE_EXPORT void
-presets_remove_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
+preset_remove_action_cb(GSimpleAction *action, GVariant *param,
+                        signal_user_data_t *ud)
 {
-    GtkTreeView      *treeview;
-    GtkTreeSelection *selection;
-    GtkTreeModel     *store;
-    GtkTreeIter       iter;
-    gchar            *preset;
-    GtkResponseType   response;
+    hb_preset_index_t * path;
+    GhbValue          * preset;
 
-    treeview  = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "presets_list"));
-    selection = gtk_tree_view_get_selection (treeview);
-    if (gtk_tree_selection_get_selected(selection, &store, &iter))
+    path = get_selected_path(ud);
+    if (path != NULL)
     {
-        GtkWindow         *hb_window;
-        GtkWidget         *dialog;
-        gboolean           is_folder;
-        hb_preset_index_t *path;
+        preset = hb_preset_get(path);
+    }
+    if (path == NULL || preset == NULL)
+    {
+        const char * fullname;
+        int          type;
 
-        gtk_tree_model_get(store, &iter, 0, &preset, -1);
-
-        path      = ghb_tree_get_index(store, &iter);
-        is_folder = preset_is_folder(path);
-        hb_window = GTK_WINDOW(GHB_WIDGET(ud->builder, "hb_window"));
-        dialog = gtk_message_dialog_new(hb_window, GTK_DIALOG_MODAL,
-                            GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
-                            _("Confirm deletion of %s:\n\n%s"),
-                            is_folder ? _("folder") : _("preset"),
-                            preset);
-        response = gtk_dialog_run(GTK_DIALOG(dialog));
-        gtk_widget_destroy (dialog);
-        if (response == GTK_RESPONSE_YES)
+        fullname = ghb_dict_get_string(ud->settings, "PresetFullName");
+        if (fullname == NULL)
         {
-            GtkTreeIter nextIter = iter;
-            gboolean    valid    = TRUE;
+            return;
+        }
+        type     = ghb_dict_get_int(ud->settings, "Type");
+        path = hb_preset_search_index(fullname, 0, type);
+        if (path != NULL)
+        {
+            preset = hb_preset_get(path);
+        }
+    }
+    if (path == NULL || preset == NULL)
+    {
+        return;
+    }
 
-            // Determine which preset to highlight after deletion done
-            if (!gtk_tree_model_iter_next(store, &nextIter))
-            {
-                nextIter = iter;
-                if (!gtk_tree_model_iter_previous(store, &nextIter))
-                {
-                    nextIter = iter;
-                    if (!gtk_tree_model_iter_parent(store, &nextIter, &iter))
-                    {
-                        nextIter = iter;
-                        valid = gtk_tree_model_get_iter_first(store, &nextIter);
-                    }
-                }
-            }
+    GtkWindow       * hb_window;
+    GtkWidget       * dialog;
+    gboolean          is_folder;
+    GtkResponseType   response;
+    const char      * name;
 
-            // Remove the selected item
-            // First unselect it so that selecting the new item works properly
-            gtk_tree_selection_unselect_iter(selection, &iter);
-            if (hb_preset_delete(path) >= 0)
-            {
-                store_presets();
-                presets_list_remove(ud, path);
-            }
-            if (valid)
-            {
-                hb_preset_index_t *path;
+    name  = ghb_dict_get_string(preset, "PresetName");
+    is_folder = preset_is_folder(path);
+    hb_window = GTK_WINDOW(GHB_WIDGET(ud->builder, "hb_window"));
+    dialog = gtk_message_dialog_new(hb_window, GTK_DIALOG_MODAL,
+                        GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
+                        _("Confirm deletion of %s:\n\n%s"),
+                        is_folder ? _("folder") : _("preset"),
+                        name);
+    response = gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+    if (response == GTK_RESPONSE_YES)
+    {
+        int depth = path->depth;
 
-                path = ghb_tree_get_index(store, &nextIter);
-                select_preset2(ud->builder, path);
-                free(path);
+        // Determine which preset to highlight after deletion done
+        hb_preset_index_t new_path = *path;
+        // Always select a preset, not a folder
+        if (depth == 1)
+        {
+            new_path.depth = 2;
+        }
+        // Try next
+        new_path.index[depth - 1] = path->index[depth - 1] + 1;
+        preset = hb_preset_get(&new_path);
+        // After deletion, index of new selected item is one less
+        new_path.index[depth - 1]--;
+        if (preset == NULL && path->index[depth - 1] > 0)
+        {
+            // Try previous
+            new_path.index[depth - 1] = path->index[depth - 1] - 1;
+            preset = hb_preset_get(&new_path);
+        }
+        if (preset == NULL)
+        {
+            // perhaps we are deleting the last item in a folder
+            // Try first item in next and previous folders
+            depth = 1;
+            new_path.index[1] = 0;
+            // Try next
+            new_path.index[depth - 1] = path->index[depth - 1] + 1;
+            preset = hb_preset_get(&new_path);
+            // After deletion, index of new selected item is one less
+            new_path.index[depth - 1]--;
+            if (preset == NULL && path->index[depth - 1] > 0)
+            {
+                // Try previous
+                new_path.index[depth - 1] = path->index[depth - 1] - 1;
+                preset = hb_preset_get(&new_path);
             }
         }
-        free(path);
-        g_free(preset);
+
+        GtkTreeView      * treeview;
+        GtkTreeSelection * selection;
+
+        // unselect item to be deleted
+        treeview  = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "presets_list"));
+        selection = gtk_tree_view_get_selection(treeview);
+        gtk_tree_selection_unselect_all(selection);
+
+        // Remove the item
+        if (hb_preset_delete(path) >= 0)
+        {
+            presets_list_remove(ud, path);
+            if (path->depth == 2)
+            {
+                // If deleting this item resulted in an empty folder
+                // delete the folder
+                int count = 0;
+                hb_value_t * folder;
+
+                path->depth = 1;
+                folder = hb_presets_get_folder_children(path);
+                if (folder != NULL)
+                {
+                    count = ghb_array_len(folder);
+                }
+                if (count == 0)
+                {
+                    // delete the folder
+                    hb_preset_delete(path);
+                    presets_list_remove(ud, path);
+                }
+            }
+            store_presets();
+            ghb_presets_menu_reinit(ud);
+        }
+        if (preset != NULL)
+        {
+            select_preset2(ud, &new_path);
+        }
     }
+    free(path);
+    ghb_update_ui_combo_box(ud, "PresetCategory", NULL, FALSE);
 }
 
 // controls where valid drop locations are
 G_MODULE_EXPORT gboolean
+#if GTK_CHECK_VERSION(3, 90, 0)
+presets_drag_motion_cb(
+    GtkTreeView        *tv,
+    GdkDrop            *ctx,
+    gint                x,
+    gint                y,
+    signal_user_data_t *ud)
+#else
 presets_drag_motion_cb(
     GtkTreeView        *tv,
     GdkDragContext     *ctx,
@@ -2109,6 +2553,7 @@ presets_drag_motion_cb(
     gint                y,
     guint               time,
     signal_user_data_t *ud)
+#endif
 {
     GtkTreeViewDropPosition  drop_pos;
     GtkTreeIter              iter;
@@ -2120,100 +2565,148 @@ presets_drag_motion_cb(
     gint                     src_ptype, dst_ptype;
     gboolean                 src_folder, dst_folder;
     GhbValue                *src_preset, *dst_preset;
-    gint                     tree_depth, ii;
     GtkWidget               *widget;
+#if GTK_CHECK_VERSION(3, 90, 0)
+    // Dummy time for backwards compatibility
+    guint                    time = 0;
+#endif
 
+    treepath = g_object_get_data(G_OBJECT(tv), "dst-tree-path");
+    if (treepath != NULL)
+    {
+        gtk_tree_path_free(treepath);
+    }
+    g_object_set_data(G_OBJECT(tv), "dst-tree-path", NULL);
+
+#if GTK_CHECK_VERSION(3, 90, 0)
+    GdkDrag *drag_ctx = gdk_drop_get_drag(ctx);
+    widget = gtk_drag_get_source_widget(drag_ctx);
+#else
     widget = gtk_drag_get_source_widget(ctx);
+#endif
     if (widget == NULL || widget != GTK_WIDGET(tv))
         return TRUE;
 
     // Get the type of the object being dragged
-    srctv  = GTK_TREE_VIEW(gtk_drag_get_source_widget(ctx));
+    srctv  = GTK_TREE_VIEW(widget);
     select = gtk_tree_view_get_selection(srctv);
-    gtk_tree_selection_get_selected (select, &model, &iter);
+    gtk_tree_selection_get_selected(select, &model, &iter);
     path   = ghb_tree_get_index(model, &iter);
 
     src_preset = hb_preset_get(path);
     free(path);
     if (src_preset == NULL)
     {
-        gdk_drag_status(ctx, 0, time);
+        ghb_drag_status(ctx, 0, time);
         return TRUE;
     }
 
-    tree_depth = preset_tree_depth(src_preset);
     src_ptype  = ghb_dict_get_int(src_preset, "Type");
     src_folder = ghb_dict_get_bool(src_preset, "Folder");
-
-    if (src_folder && tree_depth == 1)
-        tree_depth = 2;
 
     // The rest checks that the destination is a valid position
     // in the list.
     gtk_tree_view_get_dest_row_at_pos(tv, x, y, &treepath, &drop_pos);
     if (treepath == NULL)
     {
-        gdk_drag_status(ctx, 0, time);
+        ghb_drag_status(ctx, 0, time);
         return TRUE;
     }
     // Don't allow repositioning of builtin presets
-    if (src_ptype != PRESETS_CUSTOM)
+    if (src_ptype != HB_PRESET_TYPE_CUSTOM)
     {
-        gdk_drag_status(ctx, 0, time);
+        gtk_tree_view_set_drag_dest_row(tv, NULL, drop_pos);
+        ghb_drag_status(ctx, 0, time);
+        gtk_tree_path_free(treepath);
         return TRUE;
     }
 
-    int len = gtk_tree_path_get_depth(treepath);
-    if (len+tree_depth-1 >= MAX_NESTED_PRESET)
-    {
-        if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_BEFORE)
-            drop_pos = GTK_TREE_VIEW_DROP_BEFORE;
-        if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_AFTER)
-            drop_pos = GTK_TREE_VIEW_DROP_AFTER;
-    }
-    for (ii = len+tree_depth-1; ii > MAX_NESTED_PRESET; ii--)
-        gtk_tree_path_up(treepath);
     path = ghb_tree_path_get_index(treepath);
-
     dst_preset = hb_preset_get(path);
     free(path);
-    if (dst_preset != NULL)
+    if (dst_preset == NULL)
     {
-        dst_ptype = ghb_dict_get_int(dst_preset, "Type");
-        dst_folder = ghb_dict_get_bool(dst_preset, "Folder");
-    }
-    else
-    {
-        dst_ptype = PRESETS_CUSTOM;
-        dst_folder = FALSE;
-    }
-
-    // Don't allow mixing custom presets in the builtins
-    if (dst_ptype != PRESETS_CUSTOM)
-    {
-        gdk_drag_status(ctx, 0, time);
+        ghb_drag_status(ctx, 0, time);
+        gtk_tree_path_free(treepath);
         return TRUE;
     }
 
-    // Only allow *drop into* for folders
-    if (!dst_folder)
+    dst_ptype = ghb_dict_get_int(dst_preset, "Type");
+    dst_folder = ghb_dict_get_bool(dst_preset, "Folder");
+
+    // Don't allow mixing custom presets in the builtins
+    if (dst_ptype != HB_PRESET_TYPE_CUSTOM)
     {
-        if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_BEFORE)
-            drop_pos = GTK_TREE_VIEW_DROP_BEFORE;
-        if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_AFTER)
-            drop_pos = GTK_TREE_VIEW_DROP_AFTER;
+        gtk_tree_view_set_drag_dest_row(tv, NULL, drop_pos);
+        ghb_drag_status(ctx, 0, time);
+        gtk_tree_path_free(treepath);
+        return TRUE;
     }
 
-    len = gtk_tree_path_get_depth(treepath);
+    // Don't allow dropping source folder before/after a non-folder
+    if (src_folder && !dst_folder)
+    {
+        gtk_tree_path_up(treepath);
+        path = ghb_tree_path_get_index(treepath);
+        dst_preset = hb_preset_get(path);
+        free(path);
+        if (dst_preset == NULL)
+        {
+            ghb_drag_status(ctx, 0, time);
+            gtk_tree_path_free(treepath);
+            return TRUE;
+        }
+
+        dst_ptype = ghb_dict_get_int(dst_preset, "Type");
+        dst_folder = ghb_dict_get_bool(dst_preset, "Folder");
+        drop_pos = GTK_TREE_VIEW_DROP_AFTER;
+    }
+
+    // Don't allow dropping a source folder into another folder
+    if ((src_folder || !dst_folder) &&
+        drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_BEFORE)
+    {
+        drop_pos = GTK_TREE_VIEW_DROP_BEFORE;
+    }
+    if ((src_folder || !dst_folder) &&
+        drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_AFTER)
+    {
+        drop_pos = GTK_TREE_VIEW_DROP_AFTER;
+    }
+
+    // Don't allow dropping a non-folder before a folder
+    if (!src_folder && dst_folder && drop_pos == GTK_TREE_VIEW_DROP_BEFORE)
+    {
+        gtk_tree_view_set_drag_dest_row(tv, NULL, drop_pos);
+        ghb_drag_status(ctx, 0, time);
+        gtk_tree_path_free(treepath);
+        return TRUE;
+    }
+
+    if (!src_folder && dst_folder && drop_pos == GTK_TREE_VIEW_DROP_AFTER)
+    {
+        drop_pos = GTK_TREE_VIEW_DROP_INTO_OR_AFTER;
+    }
+
     gtk_tree_view_set_drag_dest_row(tv, treepath, drop_pos);
-    gtk_tree_path_free(treepath);
-    gdk_drag_status(ctx, GDK_ACTION_MOVE, time);
+    ghb_drag_status(ctx, GDK_ACTION_MOVE, time);
+
+    g_object_set_data(G_OBJECT(tv), "dst-tree-path", treepath);
+    g_object_set_data(G_OBJECT(tv), "dst-drop-pos", (gpointer)drop_pos);
+
     return TRUE;
 }
 
 G_MODULE_EXPORT void
-presets_drag_cb(
-    GtkTreeView        *dst_widget,
+#if GTK_CHECK_VERSION(3, 90, 0)
+presets_drag_data_received_cb(
+    GtkTreeView        *tv,
+    GdkDrop            *dc,
+    GtkSelectionData   *selection_data,
+    signal_user_data_t *ud)
+#else
+presets_drag_data_received_cb(
+    GtkTreeView        *tv,
     GdkDragContext     *dc,
     gint                x,
     gint                y,
@@ -2221,146 +2714,151 @@ presets_drag_cb(
     guint               info,
     guint               t,
     signal_user_data_t *ud)
+#endif
 {
+    GtkTreeModel            *dst_model;
     GtkTreePath             *dst_treepath = NULL;
     GtkTreeViewDropPosition  drop_pos;
     GtkTreeIter              dst_iter, src_iter;
     gint                     src_ptype;
     gboolean                 src_folder, dst_folder;
 
-    GtkTreeModel *dst_model = gtk_tree_view_get_model(dst_widget);
-
-    // This doesn't work here for some reason...
-    // gtk_tree_view_get_drag_dest_row(dstwidget, &path, &drop_pos);
-    gtk_tree_view_get_dest_row_at_pos(dst_widget, x, y,
-                                      &dst_treepath, &drop_pos);
-    // This little hack is needed because attempting to drop after
-    // the last item gives us no dst_treepath or drop_pos.
+    dst_model    = gtk_tree_view_get_model(tv);
+    dst_treepath = g_object_get_data(G_OBJECT(tv), "dst-tree-path");
+    drop_pos     = (GtkTreeViewDropPosition)g_object_get_data(G_OBJECT(tv),
+                                                              "dst-drop-pos");
+    g_object_set_data(G_OBJECT(tv), "dst-tree-path", NULL);
     if (dst_treepath == NULL)
     {
-        gint n_children;
-
-        n_children = gtk_tree_model_iter_n_children(dst_model, NULL);
-        if (n_children)
-        {
-            drop_pos = GTK_TREE_VIEW_DROP_AFTER;
-            dst_treepath = gtk_tree_path_new_from_indices(n_children-1, -1);
-        }
-        else
-        {
-            drop_pos = GTK_TREE_VIEW_DROP_BEFORE;
-            dst_treepath = gtk_tree_path_new_from_indices(0, -1);
-        }
+        return;
     }
-    if (dst_treepath)
+
+    GtkTreeView       *src_widget;
+    GtkTreeModel      *src_model;
+    GtkTreeSelection  *select;
+    hb_preset_index_t *dst_path, *src_path;
+
+#if GTK_CHECK_VERSION(3, 90, 0)
+    GdkDrag *drag_ctx = gdk_drop_get_drag(dc);
+    src_widget = GTK_TREE_VIEW(gtk_drag_get_source_widget(drag_ctx));
+#else
+    src_widget = GTK_TREE_VIEW(gtk_drag_get_source_widget(dc));
+#endif
+    select     = gtk_tree_view_get_selection (src_widget);
+    gtk_tree_selection_get_selected(select, &src_model, &src_iter);
+
+    src_path   = ghb_tree_get_index(src_model, &src_iter);
+    src_ptype  = preset_get_type(src_path);
+    src_folder = preset_is_folder(src_path);
+
+    // Don't allow repositioning of builtin presets
+    if (src_ptype != HB_PRESET_TYPE_CUSTOM)
     {
-        GtkTreeView       *src_widget;
-        GtkTreeModel      *src_model;
-        GtkTreeSelection  *select;
-        gint               tree_depth, ii;
-        hb_preset_index_t *dst_path, *src_path;
-        hb_value_t        *src_preset;
+        free(src_path);
+        gtk_tree_path_free(dst_treepath);
+        return;
+    }
 
-        src_widget = GTK_TREE_VIEW(gtk_drag_get_source_widget(dc));
-        select     = gtk_tree_view_get_selection (src_widget);
-        gtk_tree_selection_get_selected(select, &src_model, &src_iter);
+    dst_path = ghb_tree_path_get_index(dst_treepath);
+    dst_folder = preset_is_folder(dst_path);
 
-        src_path   = ghb_tree_get_index(src_model, &src_iter);
-        src_ptype  = preset_get_type(src_path);
-        src_folder = preset_is_folder(src_path);
-
-        // Don't allow repositioning of builtin presets
-        if (src_ptype != PRESETS_CUSTOM)
-        {
-            free(src_path);
-            return;
-        }
-
-        src_preset = hb_preset_get(src_path);
-        tree_depth = preset_tree_depth(src_preset);
-        if (src_folder && tree_depth == 1)
-            tree_depth = 2;
-
+    // Don't allow allow dropping source folders after/before non-folders
+    if (src_folder && !dst_folder)
+    {
+        gtk_tree_path_up(dst_treepath);
         dst_path = ghb_tree_path_get_index(dst_treepath);
-        if (dst_path->depth + tree_depth - 1 >= MAX_NESTED_PRESET)
-        {
-            if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_BEFORE)
-                drop_pos = GTK_TREE_VIEW_DROP_BEFORE;
-            else if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_AFTER)
-                drop_pos = GTK_TREE_VIEW_DROP_AFTER;
-        }
-
-        for (ii = dst_path->depth + tree_depth-1; ii > MAX_NESTED_PRESET; ii--)
-        {
-            gtk_tree_path_up(dst_treepath);
-            dst_path->depth--;
-        }
-
         dst_folder = preset_is_folder(dst_path);
 
-        // Only allow *drop into* for folders
-        if (!dst_folder)
-        {
-            if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_BEFORE)
-                drop_pos = GTK_TREE_VIEW_DROP_BEFORE;
-            else if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_AFTER)
-                drop_pos = GTK_TREE_VIEW_DROP_AFTER;
-        }
-        free(dst_path);
-        if (gtk_tree_model_get_iter(dst_model, &dst_iter, dst_treepath))
-        {
-            GtkTreeIter iter;
-
-            // Insert new empty row in UI preset list
-            // This logic determines the final position of the preset,
-            // i.e. before, after or inside the target entry.
-            // So the dst_path to move the preset to must be computed
-            // after moving the entry in the UI list
-            switch (drop_pos)
-            {
-                case GTK_TREE_VIEW_DROP_BEFORE:
-                    gtk_tree_store_insert_before(GTK_TREE_STORE(dst_model),
-                                                &iter, NULL, &dst_iter);
-                    break;
-
-                case GTK_TREE_VIEW_DROP_INTO_OR_BEFORE:
-                    gtk_tree_store_insert(GTK_TREE_STORE(dst_model),
-                                                &iter, &dst_iter, 0);
-                    break;
-
-                case GTK_TREE_VIEW_DROP_AFTER:
-                    gtk_tree_store_insert_after(GTK_TREE_STORE(dst_model),
-                                                &iter, NULL, &dst_iter);
-                    break;
-
-                case GTK_TREE_VIEW_DROP_INTO_OR_AFTER:
-                    gtk_tree_store_insert_after(GTK_TREE_STORE(dst_model),
-                                                &iter, &dst_iter, NULL);
-                    break;
-
-                default:
-                    break;
-            }
-
-            // Move source preset at the desired location
-            dst_path = ghb_tree_get_index(dst_model, &iter);
-            hb_preset_move(src_path, dst_path);
-            free(dst_path);
-
-            // Remove the old entry in the UI list
-            gtk_tree_store_remove(GTK_TREE_STORE(src_model), &src_iter);
-
-            // UI elements were shuffled again.  recompute dst_path
-            dst_path = ghb_tree_get_index(dst_model, &iter);
-            presets_list_update_item(ud, dst_path, TRUE);
-            select_preset2(ud->builder, dst_path);
-            free(dst_path);
-
-            store_presets();
-        }
-        gtk_tree_path_free(dst_treepath);
-        free(src_path);
+        drop_pos = GTK_TREE_VIEW_DROP_AFTER;
     }
+
+    // Don't allow dropping folders into other folders, only before/after
+    if (src_folder && dst_folder)
+    {
+        if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_BEFORE)
+            drop_pos = GTK_TREE_VIEW_DROP_BEFORE;
+        else if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_AFTER)
+            drop_pos = GTK_TREE_VIEW_DROP_AFTER;
+    }
+
+    if (!src_folder && dst_folder)
+    {
+        // Don't allow dropping preset before a folder
+        if (drop_pos == GTK_TREE_VIEW_DROP_BEFORE)
+        {
+            free(src_path);
+            free(dst_path);
+            gtk_tree_path_free(dst_treepath);
+            return;
+        }
+        // Don't allow dropping preset after a folder, only into
+        if (drop_pos == GTK_TREE_VIEW_DROP_AFTER)
+            drop_pos = GTK_TREE_VIEW_DROP_INTO_OR_AFTER;
+    }
+
+    // Don't allow dropping into non-folder items
+    if (!dst_folder)
+    {
+        if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_BEFORE)
+            drop_pos = GTK_TREE_VIEW_DROP_BEFORE;
+        else if (drop_pos == GTK_TREE_VIEW_DROP_INTO_OR_AFTER)
+            drop_pos = GTK_TREE_VIEW_DROP_AFTER;
+    }
+    free(dst_path);
+    if (gtk_tree_model_get_iter(dst_model, &dst_iter, dst_treepath))
+    {
+        GtkTreeIter iter;
+
+        // Insert new empty row in UI preset list
+        // This logic determines the final position of the preset,
+        // i.e. before, after or inside the target entry.
+        // So the dst_path to move the preset to must be computed
+        // after moving the entry in the UI list
+        switch (drop_pos)
+        {
+            case GTK_TREE_VIEW_DROP_BEFORE:
+                gtk_tree_store_insert_before(GTK_TREE_STORE(dst_model),
+                                            &iter, NULL, &dst_iter);
+                break;
+
+            case GTK_TREE_VIEW_DROP_INTO_OR_BEFORE:
+                gtk_tree_store_insert(GTK_TREE_STORE(dst_model),
+                                            &iter, &dst_iter, 0);
+                break;
+
+            case GTK_TREE_VIEW_DROP_AFTER:
+                gtk_tree_store_insert_after(GTK_TREE_STORE(dst_model),
+                                            &iter, NULL, &dst_iter);
+                break;
+
+            case GTK_TREE_VIEW_DROP_INTO_OR_AFTER:
+                gtk_tree_store_insert_after(GTK_TREE_STORE(dst_model),
+                                            &iter, &dst_iter, NULL);
+                break;
+
+            default:
+                break;
+        }
+
+        // Move source preset at the desired location
+        dst_path = ghb_tree_get_index(dst_model, &iter);
+        hb_preset_move(src_path, dst_path);
+        free(dst_path);
+
+        // Remove the old entry in the UI list
+        gtk_tree_store_remove(GTK_TREE_STORE(src_model), &src_iter);
+
+        // UI elements were shuffled again.  recompute dst_path
+        dst_path = ghb_tree_get_index(dst_model, &iter);
+        presets_list_update_item(ud, dst_path, TRUE);
+        select_preset2(ud, dst_path);
+        free(dst_path);
+
+        store_presets();
+        ghb_presets_menu_reinit(ud);
+    }
+    gtk_tree_path_free(dst_treepath);
+    free(src_path);
 }
 
 void
@@ -2400,37 +2898,6 @@ presets_row_expanded_cb(
     store_presets();
 }
 
-char*
-preset_get_fullname(hb_preset_index_t *path)
-{
-    int                ii;
-    GString           *gstr;
-    hb_preset_index_t *tmp;
-    GhbValue          *dict;
-
-    gstr = g_string_new("");
-    tmp  = hb_preset_index_dup(path);
-    for (ii = 1; ii <= path->depth; ii++)
-    {
-        const char *name;
-        tmp->depth = ii;
-        dict = hb_preset_get(tmp);
-        if (dict == NULL)
-        {
-            break;
-        }
-        name = ghb_dict_get_string(dict, "PresetName");
-        if (name != NULL)
-        {
-            g_string_append(gstr, "/");
-            g_string_append(gstr, name);
-        }
-    }
-    free(tmp);
-    char *str = g_string_free(gstr, FALSE);
-    return str;
-}
-
 // Makes a copy of the preset and assigns "PresetFullName" which
 // is use to look up the preset in the preset list should the need
 // arrise, e.g. saving changes to the preset.
@@ -2456,7 +2923,7 @@ ghb_get_current_preset(signal_user_data_t *ud)
             char *fullname;
 
             preset   = hb_value_dup(preset);
-            fullname = preset_get_fullname(path);
+            fullname = preset_get_fullname(path, "/", FALSE);
             ghb_dict_set_string(preset, "PresetFullName", fullname);
             free(fullname);
         }
@@ -2468,10 +2935,8 @@ ghb_get_current_preset(signal_user_data_t *ud)
 G_MODULE_EXPORT void
 presets_list_selection_changed_cb(GtkTreeSelection *selection, signal_user_data_t *ud)
 {
-    GtkWidget         *widget;
-    hb_preset_index_t *path;
+    hb_preset_index_t * path;
 
-    widget = GHB_WIDGET (ud->builder, "presets_remove");
     path   = get_selected_path(ud);
     if (path != NULL)
     {
@@ -2480,37 +2945,70 @@ presets_list_selection_changed_cb(GtkTreeSelection *selection, signal_user_data_
             !ghb_dict_get_bool(ud->settings, "preset_reload"))
         {
             ghb_preset_to_settings(ud->settings, dict);
-            char *fullname = preset_get_fullname(path);
+            char *fullname = preset_get_fullname(path, "/", FALSE);
             ghb_dict_set_string(ud->settings, "PresetFullName", fullname);
             free(fullname);
             ghb_set_current_title_settings(ud);
             ghb_load_post_settings(ud);
         }
-        gtk_widget_set_sensitive(widget, TRUE);
+        if (!ghb_dict_get_bool(dict, "Folder"))
+        {
+            GSimpleAction * action;
+            GtkWidget     * widget;
+
+            set_preset_menu_button_label(ud, path);
+            action = G_SIMPLE_ACTION(g_action_map_lookup_action(
+                                     G_ACTION_MAP(ud->app), "preset-reload"));
+            g_simple_action_set_enabled(action, FALSE);
+            widget = GHB_WIDGET(ud->builder, "preset_selection_modified_label");
+            gtk_widget_set_visible(widget, FALSE);
+            widget = GHB_WIDGET(ud->builder, "preset_selection_reload");
+            gtk_widget_set_visible(widget, FALSE);
+            widget = GHB_WIDGET(ud->builder, "preset_save_new");
+            gtk_widget_set_visible(widget, FALSE);
+        }
+        int type = preset_get_type(path);
+        GSimpleAction * action;
+
+        action = G_SIMPLE_ACTION(g_action_map_lookup_action(
+                                 G_ACTION_MAP(ud->app), "preset-rename"));
+        g_simple_action_set_enabled(action, type == HB_PRESET_TYPE_CUSTOM);
+        action = G_SIMPLE_ACTION(g_action_map_lookup_action(
+                                 G_ACTION_MAP(ud->app), "preset-save"));
+        g_simple_action_set_enabled(action, type == HB_PRESET_TYPE_CUSTOM);
         free(path);
-    }
-    else
-    {
-        g_debug(_("No selection???  Perhaps unselected."));
-        gtk_widget_set_sensitive(widget, FALSE);
     }
 }
 
 void
 ghb_clear_presets_selection(signal_user_data_t *ud)
 {
-    GtkTreeView      *treeview;
-    GtkTreeSelection *selection;
+    GtkTreeView      * treeview;
+    GtkTreeSelection * selection;
+    GSimpleAction    * action;
+    GtkWidget        * widget;
 
     if (ud->dont_clear_presets) return;
     treeview  = GTK_TREE_VIEW(GHB_WIDGET(ud->builder, "presets_list"));
-    selection = gtk_tree_view_get_selection (treeview);
-    gtk_tree_selection_unselect_all (selection);
+    selection = gtk_tree_view_get_selection(treeview);
+    gtk_tree_selection_unselect_all(selection);
     ghb_dict_set_bool(ud->settings, "preset_modified", TRUE);
+
+
+    action = G_SIMPLE_ACTION(g_action_map_lookup_action(G_ACTION_MAP(ud->app),
+                                                        "preset-reload"));
+    g_simple_action_set_enabled(action, TRUE);
+    widget = GHB_WIDGET(ud->builder, "preset_selection_modified_label");
+    gtk_widget_set_visible(widget, TRUE);
+    widget = GHB_WIDGET(ud->builder, "preset_selection_reload");
+    gtk_widget_set_visible(widget, TRUE);
+    widget = GHB_WIDGET(ud->builder, "preset_save_new");
+    gtk_widget_set_visible(widget, TRUE);
 }
 
 G_MODULE_EXPORT void
-presets_default_clicked_cb(GtkWidget *xwidget, signal_user_data_t *ud)
+preset_default_action_cb(GSimpleAction *action, GVariant *param,
+                         signal_user_data_t *ud)
 {
     hb_preset_index_t *path = get_selected_path(ud);
     if (path != NULL)

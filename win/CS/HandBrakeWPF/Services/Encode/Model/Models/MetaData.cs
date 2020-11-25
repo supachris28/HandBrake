@@ -9,31 +9,20 @@
 
 namespace HandBrakeWPF.Services.Encode.Model.Models
 {
-    /// <summary>
-    /// The meta data.
-    /// </summary>
+    using HandBrakeWPF.Services.Scan.Model;
+
     public class MetaData
     {
-        private string albumArtist;
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="MetaData"/> class. 
-        /// </summary>
         public MetaData()
         {
         }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="MetaData"/> class. 
-        /// </summary>
-        /// <param name="metadata">
-        /// The metadata.
-        /// </param>
         public MetaData(MetaData metadata)
         {
             if (metadata != null)
             {
                 this.AlbumArtist = metadata.AlbumArtist;
+                this.Album = metadata.Album;
                 this.Artist = metadata.Artist;
                 this.Comment = metadata.Comment;
                 this.Composer = metadata.Composer;
@@ -45,59 +34,57 @@ namespace HandBrakeWPF.Services.Encode.Model.Models
             }
         }
 
-        /// <summary>
-        ///     Gets or sets the album artist.
-        /// </summary>
-        public string AlbumArtist
+        public MetaData(Metadata metadata)
         {
-            get
+            if (metadata != null)
             {
-                return this.albumArtist;
-            }
-            set
-            {
-                this.albumArtist = value;
+                this.AlbumArtist = metadata.AlbumArtist;
+                this.Album = metadata.Album;
+                this.Artist = metadata.Artist;
+                this.Comment = metadata.Comment;
+                this.Composer = metadata.Composer;
+                this.Description = metadata.Description;
+                this.Genre = metadata.Genre;
+                this.LongDescription = metadata.LongDescription;
+                this.Name = metadata.Name;
+                this.ReleaseDate = metadata.ReleaseDate;
             }
         }
 
-        /// <summary>
-        ///     Gets or sets the artist.
-        /// </summary>
+        public string AlbumArtist { get; set; }
+
+        public string Album { get; set; }
+
         public string Artist { get; set; }
 
-        /// <summary>
-        ///     Gets or sets the comment.
-        /// </summary>
         public string Comment { get; set; }
 
-        /// <summary>
-        ///     Gets or sets the composer.
-        /// </summary>
         public string Composer { get; set; }
 
-        /// <summary>
-        ///     Gets or sets the description.
-        /// </summary>
         public string Description { get; set; }
 
-        /// <summary>
-        ///     Gets or sets the genre.
-        /// </summary>
         public string Genre { get; set; }
 
-        /// <summary>
-        ///     Gets or sets the long description.
-        /// </summary>
         public string LongDescription { get; set; }
 
-        /// <summary>
-        ///     Gets or sets the name.
-        /// </summary>
         public string Name { get; set; }
 
-        /// <summary>
-        ///     Gets or sets the release date.
-        /// </summary>
         public string ReleaseDate { get; set; }
+
+        public bool IsMetadataSet
+        {
+            get
+            {
+                return !string.IsNullOrEmpty(AlbumArtist) || !string.IsNullOrEmpty(Album)
+                                                          || !string.IsNullOrEmpty(Artist)
+                                                          || !string.IsNullOrEmpty(Comment)
+                                                          || !string.IsNullOrEmpty(Composer)
+                                                          || !string.IsNullOrEmpty(Description)
+                                                          || !string.IsNullOrEmpty(Genre)
+                                                          || !string.IsNullOrEmpty(LongDescription)
+                                                          || !string.IsNullOrEmpty(Name)
+                                                          || !string.IsNullOrEmpty(ReleaseDate);
+            }
+        }
     }
 }

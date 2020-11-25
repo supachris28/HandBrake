@@ -6,19 +6,21 @@
 
 #import <Cocoa/Cocoa.h>
 
-@class HBQueueController;
-@class HBPresetsManager;
+@import HandBrakeKit;
 
-@class HBJob;
+@class HBAppDelegate;
+@class HBQueue;
+
+NS_ASSUME_NONNULL_BEGIN
 
 @interface HBController : NSWindowController
 
-- (instancetype)initWithQueue:(HBQueueController *)queueController presetsManager:(HBPresetsManager *)manager;
+- (instancetype)initWithDelegate:(HBAppDelegate *)delegate queue:(HBQueue *)queue presetsManager:(HBPresetsManager *)manager;
 
 - (void)launchAction;
 
-- (BOOL)openURL:(NSURL *)fileURL;
-- (BOOL)openJob:(HBJob *)job;
+- (void)openURL:(NSURL *)fileURL;
+- (void)openJob:(HBJob *)job completionHandler:(void (^)(BOOL result))handler;
 
 - (IBAction)browseSources:(id)sender;
 
@@ -28,16 +30,20 @@
 - (IBAction)addToQueue:(id)sender;
 - (IBAction)addAllTitlesToQueue:(id)sender;
 
-- (void)setQueueState:(NSUInteger)count;
-- (void)setQueueInfo:(NSString *)info progress:(double)progress hidden:(BOOL)hidden;
-
-- (IBAction)rip:(id)sender;
-- (IBAction)pause:(id)sender;
+- (IBAction)toggleStartCancel:(id)sender;
+- (IBAction)togglePauseResume:(id)sender;
 
 - (IBAction)selectPresetFromMenu:(id)sender;
 
 // Manage User presets
 - (IBAction)showAddPresetPanel:(id)sender;
+- (IBAction)showRenamePresetPanel:(id)sender;
 - (IBAction)selectDefaultPreset:(id)sender;
 
+- (IBAction)deletePreset:(id)sender;
+- (IBAction)reloadPreset:(id)sender;
+
 @end
+
+NS_ASSUME_NONNULL_END
+

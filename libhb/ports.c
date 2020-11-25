@@ -1,11 +1,13 @@
 /* ports.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
+
+#include "handbrake/project.h"
 
 #ifdef SYS_MINGW
 #define _WIN32_WINNT 0x600
@@ -23,9 +25,13 @@
 #include <kernel/OS.h>
 #endif
 
-#if defined(SYS_DARWIN) || defined(SYS_FREEBSD)
+#if defined(SYS_DARWIN) || defined(SYS_FREEBSD) || defined(SYS_NETBSD)
 #include <sys/types.h>
 #include <sys/sysctl.h>
+#if HB_PROJECT_FEATURE_QSV && defined(SYS_FREEBSD)
+#include <libdrm/drm.h>
+#include <fcntl.h>
+#endif
 #endif
 
 #ifdef SYS_OPENBSD
@@ -70,6 +76,9 @@
 #include <linux/cdrom.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#if HB_PROJECT_FEATURE_QSV
+#include <libdrm/drm.h>
+#endif
 #elif defined( SYS_OPENBSD )
 #include <sys/dvdio.h>
 #include <fcntl.h>
@@ -83,7 +92,7 @@
 #include <stddef.h>
 #include <unistd.h>
 
-#include "hb.h"
+#include "handbrake/handbrake.h"
 #include "libavutil/cpu.h"
 
 /************************************************************************
@@ -213,7 +222,7 @@ void hb_snooze( int delay )
     }
 #if defined( SYS_BEOS )
     snooze( 1000 * delay );
-#elif defined( SYS_DARWIN ) || defined( SYS_LINUX ) || defined( SYS_FREEBSD) || defined( SYS_SunOS )
+#elif defined( SYS_DARWIN ) || defined( SYS_LINUX ) || defined( SYS_FREEBSD) || defined(SYS_NETBSD) || defined( SYS_SunOS )
     usleep( 1000 * delay );
 #elif defined( SYS_CYGWIN ) || defined( SYS_MINGW )
     Sleep( delay );
@@ -256,8 +265,6 @@ const char* hb_get_cpu_platform_name()
 {
     switch (hb_cpu_info.platform)
     {
-        // Intel 64 and IA-32 Architectures Software Developer's Manual, Vol. 3C
-        // Table 35-1: CPUID Signature Values of DisplayFamily_DisplayModel
         case HB_CPU_PLATFORM_INTEL_BNL:
             return "Intel microarchitecture Bonnell";
         case HB_CPU_PLATFORM_INTEL_SNB:
@@ -276,6 +283,10 @@ const char* hb_get_cpu_platform_name()
             return "Intel microarchitecture Airmont";
         case HB_CPU_PLATFORM_INTEL_KBL:
             return "Intel microarchitecture Kaby Lake";
+        case HB_CPU_PLATFORM_INTEL_ICL:
+            return "Intel microarchitecture Ice Lake";
+        case HB_CPU_PLATFORM_INTEL_TGL:
+            return "Intel microarchitecture Tiger Lake";
         default:
             return NULL;
     }
@@ -314,8 +325,8 @@ static void init_cpu_info()
         family = ((eax >> 8) & 0xf) + ((eax >> 20) & 0xff);
         model  = ((eax >> 4) & 0xf) + ((eax >> 12) & 0xf0);
 
-        // Intel 64 and IA-32 Architectures Software Developer's Manual, Vol. 3C
-        // Table 35-1: CPUID Signature Values of DisplayFamily_DisplayModel
+        // Intel 64 and IA-32 Architectures Software Developer's Manual, Volume 4/January 2019
+        // Table 2-1. CPUID Signature Values of DisplayFamily_DisplayModel
         switch (family)
         {
             case 0x06:
@@ -365,6 +376,12 @@ static void init_cpu_info()
                     case 0x8E:
                     case 0x9E:
                         hb_cpu_info.platform = HB_CPU_PLATFORM_INTEL_KBL;
+                        break;
+                    case 0x7E:
+                        hb_cpu_info.platform = HB_CPU_PLATFORM_INTEL_ICL;
+                        break;
+                    case 0x8C:
+                        hb_cpu_info.platform = HB_CPU_PLATFORM_INTEL_TGL;
                         break;
                     default:
                         break;
@@ -436,9 +453,9 @@ static int init_cpu_count()
     get_system_info( &info );
     cpu_count = info.cpu_count;
 
-#elif defined(SYS_DARWIN) || defined(SYS_FREEBSD) || defined(SYS_OPENBSD)
+#elif defined(SYS_DARWIN) || defined(SYS_FREEBSD) || defined(SYS_NETBSD) || defined(SYS_OPENBSD)
     size_t length = sizeof( cpu_count );
-#ifdef SYS_OPENBSD
+#if defined SYS_OPENBSD || defined(SYS_NETBSD)
     int mib[2] = { CTL_HW, HW_NCPU };
     if( sysctl(mib, 2, &cpu_count, &length, NULL, 0) )
 #else
@@ -566,7 +583,7 @@ void hb_get_user_config_directory( char path[512] )
         return;
     }
 #elif defined( __APPLE__ )
-    if (osx_get_user_config_directory(path) == 0)
+    if (macOS_get_user_config_directory(path) == 0)
     {
         return;
     }
@@ -598,17 +615,17 @@ void hb_get_user_config_filename( char name[1024], char *fmt, ... )
 /************************************************************************
  * Get a temporary directory for HB
  ***********************************************************************/
-void hb_get_temporary_directory( char path[512] )
+char * hb_get_temporary_directory()
 {
-    char base[512];
-    char *p;
+    char * path, * base, * p;
 
     /* Create the base */
 #if defined( SYS_CYGWIN ) || defined( SYS_MINGW )
-    int i_size = GetTempPath( 512, base );
-    if( i_size <= 0 || i_size >= 512 )
+    base = malloc(MAX_PATH);
+    int i_size = GetTempPath( MAX_PATH, base );
+    if( i_size <= 0 || i_size >= MAX_PATH )
     {
-        if( getcwd( base, 512 ) == NULL )
+        if( getcwd( base, MAX_PATH ) == NULL )
             strcpy( base, "c:" ); /* Bad fallback but ... */
     }
 
@@ -617,32 +634,39 @@ void hb_get_temporary_directory( char path[512] )
         *p = '/';
 #else
     if( (p = getenv( "TMPDIR" ) ) != NULL ||
-        (p = getenv( "TEMP" ) ) != NULL )
-        strcpy( base, p );
+        (p = getenv( "TEMP" ) )   != NULL )
+        base = strdup(p);
     else
-        strcpy( base, "/tmp" );
+        base = strdup("/tmp");
 #endif
     /* I prefer to remove evntual last '/' (for cygwin) */
     if( base[strlen(base)-1] == '/' )
         base[strlen(base)-1] = '\0';
 
-    snprintf(path, 512, "%s/hb.%d", base, (int)getpid());
+    path = hb_strdup_printf("%s/hb.%d", base, (int)getpid());
+    free(base);
+
+    return path;
 }
 
 /************************************************************************
  * Get a tempory filename for HB
  ***********************************************************************/
-void hb_get_tempory_filename( hb_handle_t * h, char name[1024],
-                              char *fmt, ... )
+char * hb_get_temporary_filename( char *fmt, ... )
 {
-    va_list args;
-
-    hb_get_temporary_directory( name );
-    strcat( name, "/" );
+    va_list   args;
+    char    * name, * path;
+    char    * dir = hb_get_temporary_directory();
 
     va_start( args, fmt );
-    vsnprintf( &name[strlen(name)], 1024 - strlen(name), fmt, args );
+    name = hb_strdup_vaprintf(fmt, args);
     va_end( args );
+
+    path = hb_strdup_printf("%s/%s", dir, name);
+    free(dir);
+    free(name);
+
+    return path;
 }
 
 /************************************************************************
@@ -834,7 +858,7 @@ static uint64_t hb_thread_to_integer( const hb_thread_t* t )
  * hb_thread_func()
  ************************************************************************
  * We use it as the root routine for any thread, for two reasons:
- *  + To set the thread priority on OS X (pthread_setschedparam() could
+ *  + To set the thread priority on macOS (pthread_setschedparam() could
  *    be called from hb_thread_init(), but it's nicer to do it as we
  *    are sure it is done before the real routine starts)
  *  + Get informed when the thread exits, so we know whether
@@ -844,12 +868,17 @@ static void attribute_align_thread hb_thread_func( void * _t )
 {
     hb_thread_t * t = (hb_thread_t *) _t;
 
-#if defined( SYS_DARWIN ) || defined( SYS_FREEBSD )
-    /* Set the thread priority */
+#if (defined( SYS_DARWIN ) && !defined(__aarch64__)) || defined( SYS_FREEBSD ) || defined ( __FreeBSD__ ) || defined(SYS_NETBSD)
+    /* Set the thread priority
+       Do not change priority on Darwin arm systems */
     struct sched_param param;
     memset( &param, 0, sizeof( struct sched_param ) );
     param.sched_priority = t->priority;
     pthread_setschedparam( pthread_self(), SCHED_OTHER, &param );
+#endif
+
+#if defined( SYS_DARWIN )
+    pthread_setname_np( t->name );
 #endif
 
 #if defined( SYS_BEOS )
@@ -987,7 +1016,7 @@ hb_lock_t * hb_lock_init()
 
     pthread_mutexattr_init(&mta);
 
-#if defined( SYS_CYGWIN ) || defined( SYS_FREEBSD )
+#if defined( SYS_CYGWIN ) || defined( SYS_FREEBSD ) || defined ( __FreeBSD__ ) || defined(SYS_NETBSD)
     pthread_mutexattr_settype(&mta, PTHREAD_MUTEX_NORMAL);
 #endif
 
@@ -1267,12 +1296,6 @@ void hb_net_close( hb_net_t ** _n )
 * OS Sleep Allow / Prevent
 ***********************************************************************/
 
-#ifdef __APPLE__
-// 128 chars limit for IOPMAssertionCreateWithName
-static CFStringRef reasonForActivity =
-    CFSTR("HandBrake is currently scanning and/or encoding");
-#endif
-
 void* hb_system_sleep_opaque_init()
 {
     void *opaque = NULL;
@@ -1312,6 +1335,7 @@ void hb_system_sleep_private_enable(void *opaque)
     if (opaque == NULL)
     {
         hb_error("hb_system_sleep: opaque is NULL");
+        return;
     }
 
     IOPMAssertionID *assertionID = (IOPMAssertionID*)opaque;
@@ -1342,14 +1366,19 @@ void hb_system_sleep_private_disable(void *opaque)
     if (opaque == NULL)
     {
         hb_error("hb_system_sleep: opaque is NULL");
+        return;
     }
-    
+
     IOPMAssertionID *assertionID = (IOPMAssertionID*)opaque;
     if (*assertionID != -1)
     {
         // nothing to do
         return;
     }
+
+    // 128 chars limit for IOPMAssertionCreateWithName
+    CFStringRef reasonForActivity =
+    CFSTR("HandBrake is currently scanning and/or encoding");
 
     IOReturn success = IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleSystemSleep,
                                                    kIOPMAssertionLevelOn,
@@ -1398,3 +1427,291 @@ int hb_dlclose(void *h)
 #endif
 }
 
+size_t hb_getline(char ** lineptr, size_t * n, FILE * fp)
+{
+#ifdef SYS_MINGW
+    char   * bufptr = NULL;
+    char   * p      = bufptr;
+    size_t   size;
+    int      c;
+
+    if (lineptr == NULL)
+    {
+        return -1;
+    }
+    if (fp == NULL)
+    {
+        return -1;
+    }
+    if (n == NULL)
+    {
+        return -1;
+    }
+    bufptr = *lineptr;
+    size   = *n;
+
+    c = fgetc(fp);
+    if (c == EOF)
+    {
+        return -1;
+    }
+    if (bufptr == NULL)
+    {
+        bufptr = malloc(128);
+        if (bufptr == NULL)
+        {
+            return -1;
+        }
+        size = 128;
+    }
+    p = bufptr;
+    while (c != EOF)
+    {
+        if ((p - bufptr) >= (size - 1))
+        {
+            char * tmp;
+            size = size + 128;
+            tmp = realloc(bufptr, size);
+            if (tmp == NULL)
+            {
+                free(bufptr);
+                return -1;
+            }
+            p = tmp + (p - bufptr);
+            bufptr = tmp;
+        }
+        *p++ = c;
+        if (c == '\n')
+        {
+            break;
+        }
+        c = fgetc(fp);
+    }
+
+    *p++ = '\0';
+    *lineptr = bufptr;
+    *n = size;
+
+    return p - bufptr - 1;
+#else
+    return getline(lineptr, n, fp);
+#endif
+}
+
+char * hb_strndup(const char * src, size_t len)
+{
+#ifdef SYS_MINGW
+    char * result, * end;
+
+    if (src == NULL)
+    {
+        return NULL;
+    }
+
+    end = memchr(src, 0, len);
+    if (end != NULL)
+    {
+        len = end - src;
+    }
+
+    result = malloc(len + 1);
+    if (result == NULL)
+    {
+        return NULL;
+    }
+    memcpy(result, src, len);
+    result[len] = 0;
+
+    return result;
+#else
+    return strndup(src, len);
+#endif
+}
+
+#if HB_PROJECT_FEATURE_QSV
+#if defined(SYS_LINUX) || defined(SYS_FREEBSD)
+
+#define MAX_NODES             16
+#define DRI_RENDER_NODE_START 128
+#define DRI_RENDER_NODE_LAST  (DRI_RENDER_NODE_START + MAX_NODES - 1)
+#define DRI_CARD_NODE_START   0
+#define DRI_CARD_NODE_LAST    (DRI_CARD_NODE_START + MAX_NODES - 1)
+
+const char* DRI_PATH = "/dev/dri/";
+const char* DRI_NODE_RENDER = "renderD";
+const char* DRI_NODE_CARD = "card";
+
+static int try_adapter(const char * name, const char * dir,
+                const char * prefix, int node_start, int node_last)
+{
+    int             node;
+    int             len        = strlen(name);
+    char          * driverName = malloc(len + 1);
+    drm_version_t   version = {};
+
+    version.name_len = len + 1;
+    version.name     = driverName;
+    for (node = node_start; node <= node_last; node++)
+    {
+        char * adapter = hb_strdup_printf("%s%s%d", dir, prefix, node);
+        int    fd      = open(adapter, O_RDWR);
+
+        free(adapter);
+        if (fd < 0)
+        {
+            continue;
+        }
+
+        if (!ioctl(fd, DRM_IOCTL_VERSION, &version) &&
+            version.name_len == len && !strncmp(driverName, name, len))
+        {
+            free(driverName);
+            return fd;
+        }
+        close(fd);
+    }
+
+    free(driverName);
+    return -1;
+}
+
+static int open_adapter(const char * name)
+{
+    int fd = try_adapter(name, DRI_PATH, DRI_NODE_RENDER,
+                         DRI_RENDER_NODE_START, DRI_RENDER_NODE_LAST);
+    if (fd < 0)
+    {
+        fd = try_adapter(name, DRI_PATH, DRI_NODE_CARD,
+                         DRI_CARD_NODE_START, DRI_CARD_NODE_LAST);
+    }
+    return fd;
+}
+
+static int try_va_interface(hb_display_t * hbDisplay,
+                            const char * interface_name)
+{
+    if (interface_name != NULL)
+    {
+        setenv("LIBVA_DRIVER_NAME", interface_name, 1);
+    }
+
+    hbDisplay->vaDisplay = vaGetDisplayDRM(hbDisplay->vaFd);
+    if (hbDisplay->vaDisplay == NULL)
+    {
+        return -1;
+    }
+
+    int major = 0, minor = 0;
+    VAStatus vaRes = vaInitialize(hbDisplay->vaDisplay, &major, &minor);
+    if (vaRes != VA_STATUS_SUCCESS)
+    {
+        vaTerminate(hbDisplay->vaDisplay);
+        return -1;
+    }
+    hbDisplay->handle = hbDisplay->vaDisplay;
+    hbDisplay->mfxType = MFX_HANDLE_VA_DISPLAY;
+
+    return 0;
+}
+
+hb_display_t * hb_display_init(const char         *  driver_name,
+                               const char * const * interface_names)
+{
+    hb_display_t * hbDisplay = calloc(sizeof(hb_display_t), 1);
+    char         * env;
+    int            ii;
+
+    hbDisplay->vaDisplay = NULL;
+    hbDisplay->vaFd      = open_adapter(driver_name);
+    if (hbDisplay->vaFd < 0)
+    {
+        hb_deep_log( 3, "hb_va_display_init: no display found" );
+        free(hbDisplay);
+        return NULL;
+    }
+
+    if ((env = getenv("LIBVA_DRIVER_NAME")) != NULL)
+    {
+        // Use only environment if it's set
+        hb_log("hb_display_init: using VA driver '%s'", env);
+        if (try_va_interface(hbDisplay, NULL) != 0)
+        {
+            close(hbDisplay->vaFd);
+            free(hbDisplay);
+            return NULL;
+        }
+    }
+    else
+    {
+        // Try list of VA driver names
+        for (ii = 0; interface_names[ii] != NULL; ii++)
+        {
+            hb_log("hb_display_init: attempting VA driver '%s'",
+                   interface_names[ii]);
+            if (try_va_interface(hbDisplay, interface_names[ii]) == 0)
+            {
+                return hbDisplay;
+            }
+        }
+        // Try default
+        unsetenv("LIBVA_DRIVER_NAME");
+        hb_log("hb_display_init: attempting VA default driver");
+        if (try_va_interface(hbDisplay, NULL) != 0)
+        {
+            close(hbDisplay->vaFd);
+            free(hbDisplay);
+            return NULL;
+        }
+    }
+    return hbDisplay;
+}
+
+void hb_display_close(hb_display_t ** _d)
+{
+    hb_display_t * hbDisplay = *_d;
+
+    if (hbDisplay == NULL)
+    {
+        return;
+    }
+    if (hbDisplay->vaDisplay)
+    {
+        vaTerminate(hbDisplay->vaDisplay);
+    }
+    if (hbDisplay->vaFd >= 0)
+    {
+        close(hbDisplay->vaFd);
+    }
+    free(hbDisplay);
+
+    *_d = NULL;
+}
+
+#else // !SYS_LINUX && !SYS_FREEBSD
+
+hb_display_t * hb_display_init(const char         *  driver_name,
+                               const char * const * interface_names)
+{
+    return NULL;
+}
+
+void hb_display_close(hb_display_t ** _d)
+{
+    (void)_d;
+}
+
+#endif // SYS_LINUX || SYS_FREEBSD
+#else // !HB_PROJECT_FEATURE_QSV
+
+hb_display_t * hb_display_init(const char         *  driver_name,
+                               const char * const * interface_names)
+{
+    return NULL;
+}
+
+void hb_display_close(hb_display_t ** _d)
+{
+    (void)_d;
+}
+
+#endif // HB_PROJECT_FEATURE_QSV

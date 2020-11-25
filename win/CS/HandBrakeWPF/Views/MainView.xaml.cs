@@ -9,12 +9,13 @@
 
 namespace HandBrakeWPF.Views
 {
-    using System;
     using System.Windows;
     using System.Windows.Controls;
     using System.Windows.Input;
     using System.Windows.Media;
 
+    using HandBrakeWPF.Services.Presets.Model;
+    using HandBrakeWPF.ViewModels;
     using HandBrakeWPF.ViewModels.Interfaces;
 
     /// <summary>
@@ -28,29 +29,6 @@ namespace HandBrakeWPF.Views
         public MainView()
         {
             this.InitializeComponent();
-        }
-
-        /// <summary>
-        /// Hide the overflow control on the Preset panel.
-        /// TODO find a better way of doing this. This seems to be the common solution. 
-        /// </summary>
-        /// <param name="sender">
-        /// The sender.
-        /// </param>
-        /// <param name="e">
-        /// The e.
-        /// </param>
-        private void ToolBarLoaded(object sender, RoutedEventArgs e)
-        {
-            ToolBar toolBar = sender as ToolBar;
-            if (toolBar != null)
-            {
-                var overflowGrid = toolBar.Template.FindName("OverflowGrid", toolBar) as FrameworkElement;
-                if (overflowGrid != null)
-                {
-                    overflowGrid.Visibility = Visibility.Collapsed;
-                }
-            }
         }
 
         /// <summary>
@@ -84,7 +62,43 @@ namespace HandBrakeWPF.Views
             }
 
             // Otherwise assume it's a main area click and add to queue.
-            ((IMainViewModel)this.DataContext).AddToQueue();
+            ((IMainViewModel)this.DataContext).AddToQueueWithErrorHandling();
+        }
+
+        private void TabControl_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (e.Source is TabControl && e.AddedItems.Count > 0)
+            {
+                TabItem tab = e.AddedItems[0] as TabItem;
+                if (tab != null && Properties.Resources.MainView_SummaryTab.Equals(tab.Header))
+                {
+                    ((MainViewModel)this.DataContext).SummaryViewModel.UpdateDisplayedInfo();
+                }
+
+                this.tabControl.Focus();
+            }
+        }
+
+        private void MorePresetOptionsButton_OnClick(object sender, RoutedEventArgs e)
+        {
+            var button = sender as FrameworkElement;
+            if (button != null && button.ContextMenu != null)
+            {
+                button.ContextMenu.PlacementTarget = button;
+                button.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+                button.ContextMenu.IsOpen = true;
+            }
+        }
+
+        private void SelectPreset_OnClick(object sender, RoutedEventArgs e)
+        {
+            var button = sender as FrameworkElement;
+            if (button != null && button.ContextMenu != null)
+            {
+                button.ContextMenu.PlacementTarget = button;
+                button.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Right;
+                button.ContextMenu.IsOpen = true;
+            }
         }
     }
 }

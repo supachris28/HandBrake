@@ -1,27 +1,24 @@
-$(eval $(call import.MODULE.defs,LIBBLURAY,libbluray,PKGCONFIG LIBXML2 FREETYPE))
+$(eval $(call import.MODULE.defs,LIBBLURAY,libbluray,LIBXML2 FREETYPE))
 $(eval $(call import.CONTRIB.defs,LIBBLURAY))
 
-LIBBLURAY.FETCH.url     = https://download.handbrake.fr/handbrake/contrib/libbluray-0.9.3.tar.bz2
-LIBBLURAY.FETCH.url    += https://download.videolan.org/pub/videolan/libbluray/0.9.3/libbluray-0.9.3.tar.bz2
-LIBBLURAY.FETCH.sha256  = a6366614ec45484b51fe94fcd1975b3b8716f90f038a33b24d59978de3863ce0
-
-ifneq (max,$(LIBBLURAY.GCC.g))
-	LIBBLURAY.CONFIGURE.extra += --disable-debug
-else
-	LIBBLURAY.CONFIGURE.extra += --enable-debug
-endif
+LIBBLURAY.FETCH.url     = https://github.com/HandBrake/HandBrake-contribs/releases/download/contribs/libbluray-1.1.2.tar.bz2
+LIBBLURAY.FETCH.url    += https://download.videolan.org/pub/videolan/libbluray/1.1.2/libbluray-1.1.2.tar.bz2
+LIBBLURAY.FETCH.sha256  = a3dd452239b100dc9da0d01b30e1692693e2a332a7d29917bf84bb10ea7c0b42
 
 ifeq (none,$(LIBBLURAY.GCC.O))
 	LIBBLURAY.CONFIGURE.extra += --disable-optimizations
 endif
 
-LIBBLURAY.CONFIGURE.extra += --disable-examples --disable-bdjava --enable-udf --without-freetype --without-fontconfig
+LIBBLURAY.CONFIGURE.extra += --disable-doxygen-doc --disable-examples --disable-bdjava-jar --without-freetype --without-fontconfig
 
-ifeq (1,$(FEATURE.local_pkgconfig))
-    LIBBLURAY.CONFIGURE.env += PATH="$(call fn.ABSOLUTE,$(CONTRIB.build/)bin):$(PATH)"
-    LIBBLURAY.BUILD.env     += PATH="$(call fn.ABSOLUTE,$(CONTRIB.build/)bin):$(PATH)"
+ifeq (mingw,$(HOST.system))
+    LIBBLURAY.GCC.D += MINGW_HAS_SECURE_API=1
 endif
 
-ifeq (mingw,$(BUILD.system))
-    LIBBLURAY.GCC.D += MINGW_HAS_SECURE_API=1
+ifeq (freebsd,$(HOST.system))
+    LIBBLURAY.GCC.D += _XOPEN_SOURCE=700
+endif
+
+ifneq (none,$(FFMPEG.GCC.g))
+    LIBBLURAY.GCC.args.extra += -g
 endif

@@ -40,7 +40,7 @@ namespace HandBrakeWPF.Utilities
                             {
                                 Id = id, 
                                 VolumeLabel = curDrive.VolumeLabel, 
-                                RootDirectory = curDrive.RootDirectory.ToString()
+                                RootDirectory = curDrive.RootDirectory?.ToString()
                             });
                         id++;
                     }
@@ -48,6 +48,21 @@ namespace HandBrakeWPF.Utilities
             }
 
             return drives;
+        }
+
+        public static bool HasMinimumDiskSpace(string destination, long minimumInBytes)
+        {
+            string drive = Path.GetPathRoot(destination);
+            if (!string.IsNullOrEmpty(drive) && !drive.StartsWith("\\"))
+            {
+                DriveInfo c = new DriveInfo(drive);
+                if (c.AvailableFreeSpace < minimumInBytes)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }

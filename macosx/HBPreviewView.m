@@ -5,6 +5,7 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import "HBPreviewView.h"
+#import <QuartzCore/QuartzCore.h>
 
 // the white border around the preview image
 #define BORDER_SIZE 2.0
@@ -13,10 +14,6 @@
 
 @property (nonatomic) CALayer *backLayer;
 @property (nonatomic) CALayer *pictureLayer;
-
-@property (nonatomic, readwrite) CGFloat scale;
-@property (nonatomic, readwrite) NSRect pictureFrame;
-
 
 @end
 
@@ -37,6 +34,7 @@
 - (nullable instancetype)initWithCoder:(NSCoder *)coder
 {
     self = [super initWithCoder:coder];
+
     if (self)
     {
         [self setUp];
@@ -56,17 +54,17 @@
     self.wantsLayer = YES;
 
     _backLayer = [CALayer layer];
-    [_backLayer setBounds:CGRectMake(0.0, 0.0, self.frame.size.width, self.frame.size.height)];
-    CGColorRef white = CGColorCreateGenericRGB(1.0, 1.0, 1.0, 1.0);
-    [_backLayer setBackgroundColor: white];
-    CFRelease(white);
-    [_backLayer setShadowOpacity:0.5f];
-    [_backLayer setShadowOffset:CGSizeMake(0, 0)];
-    [_backLayer setAnchorPoint:CGPointMake(0, 0)];
+    _backLayer.bounds = CGRectMake(0.0, 0.0, self.frame.size.width, self.frame.size.height);
+    _backLayer.backgroundColor = NSColor.whiteColor.CGColor;
+    _backLayer.shadowOpacity = 0.5f;
+    _backLayer.shadowOffset = CGSizeZero;
+    _backLayer.anchorPoint = CGPointZero;
+    _backLayer.opaque = YES;
 
     _pictureLayer = [CALayer layer];
-    [_pictureLayer setBounds:CGRectMake(0.0, 0.0, self.frame.size.width - (BORDER_SIZE * 2), self.frame.size.height - (BORDER_SIZE * 2))];
-    [_pictureLayer setAnchorPoint:CGPointMake(0, 0)];
+    _pictureLayer.bounds = CGRectMake(0.0, 0.0, self.frame.size.width - (BORDER_SIZE * 2), self.frame.size.height - (BORDER_SIZE * 2));
+    _pictureLayer.anchorPoint = CGPointZero;
+    _pictureLayer.opaque = YES;
 
     // Disable fade on contents change.
     NSMutableDictionary *actions = [NSMutableDictionary dictionary];
@@ -83,11 +81,15 @@
 
     _pictureLayer.hidden = YES;
     _backLayer.hidden = YES;
-
     _showBorder = YES;
+}
 
-    _scale = 1;
-    _pictureFrame = _pictureLayer.frame;
+- (void)viewDidChangeBackingProperties
+{
+    if (self.window)
+    {
+        self.needsLayout = YES;
+    }
 }
 
 - (void)setImage:(CGImageRef)image
@@ -100,32 +102,48 @@
     self.pictureLayer.hidden = hidden ;
     self.backLayer.hidden = hidden || !self.showBorder;
 
-    [self _updatePreviewLayout];
+    self.needsLayout = YES;
 }
 
 - (void)setFitToView:(BOOL)fitToView
 {
     _fitToView = fitToView;
-    [self _updatePreviewLayout];
+    self.needsLayout = YES;
 }
 
 - (void)setShowBorder:(BOOL)showBorder
 {
     _showBorder = showBorder;
     self.backLayer.hidden = !showBorder;
-    [self _updatePreviewLayout];
+    self.needsLayout = YES;
 }
 
-- (void)setFrame:(NSRect)newRect {
-    // A change in size has required the view to be invalidated.
-    if ([self inLiveResize]) {
-        [super setFrame:newRect];
-    }
-    else {
-        [super setFrame:newRect];
-    }
+- (void)setShowShadow:(BOOL)showShadow
+{
+    _backLayer.shadowOpacity = showShadow ? 0.5f : 0;
+}
 
-    [self _updatePreviewLayout];
+- (CGFloat)scale
+{
+    if (self.image)
+    {
+        NSSize imageSize = NSMakeSize(CGImageGetWidth(self.image), CGImageGetHeight(self.image));
+        CGFloat backingScaleFactor = self.window.backingScaleFactor;
+        CGFloat borderSize = self.showBorder ? BORDER_SIZE : 0;
+
+        NSSize imageScaledSize = [self imageScaledSize:imageSize toFit:self.frame.size borderSize:borderSize scaleFactor:self.window.backingScaleFactor];
+
+        return (imageScaledSize.width - borderSize * 2) / imageSize.width * backingScaleFactor;
+    }
+    else
+    {
+        return 1;
+    }
+}
+
+- (CGRect)pictureFrame
+{
+    return self.pictureLayer.frame;
 }
 
 - (NSSize)scaledSize:(NSSize)source toFit:(NSSize)destination
@@ -151,103 +169,69 @@
     return result;
 }
 
-/**
- *  Updates the sublayers layout.
- */
-- (void)_updatePreviewLayout
+- (NSSize)imageScaledSize:(NSSize)source toFit:(NSSize)destination borderSize:(CGFloat)borderSize scaleFactor:(CGFloat)scaleFactor
 {
-    // Set the picture size display fields below the Preview Picture
+    // HiDPI mode usually display everything
+    // with double pixel count, but we don't
+    // want to double the size of the video
+    NSSize scaledSource = NSMakeSize(source.width / scaleFactor, source.height / scaleFactor);
+
+    scaledSource.width += borderSize * 2;
+    scaledSource.height += borderSize * 2;
+
+    if (self.fitToView == YES || scaledSource.width > destination.width || scaledSource.height > destination.height)
+    {
+        // If the image is larger then the view or if we are in Fit to View mode, scale the image
+        scaledSource = [self scaledSize:source toFit:destination];
+    }
+
+    return scaledSource;
+}
+
+- (void)layout
+{
+    [super layout];
+
     NSSize imageSize = NSMakeSize(CGImageGetWidth(self.image), CGImageGetHeight(self.image));
 
-    if (imageSize.width > 0 && imageSize.height > 0) {
-        NSSize imageScaledSize = imageSize;
-
-        if (self.window.backingScaleFactor != 1.0)
-        {
-            // HiDPI mode usually display everything
-            // with douple pixel count, but we don't
-            // want to double the size of the video
-            imageScaledSize.height /= self.window.backingScaleFactor;
-            imageScaledSize.width /= self.window.backingScaleFactor;
-        }
-
+    if (imageSize.width > 0 && imageSize.height > 0)
+    {
+        CGFloat borderSize = self.showBorder ? BORDER_SIZE : 0;
         NSSize frameSize = self.frame.size;
 
-        if (self.showBorder == YES)
-        {
-            frameSize.width -= BORDER_SIZE * 2;
-            frameSize.height -= BORDER_SIZE * 2;
-        }
+        NSSize imageScaledSize = [self imageScaledSize:imageSize
+                                                 toFit:frameSize
+                                            borderSize:borderSize
+                                           scaleFactor:self.window.backingScaleFactor];
 
-        if (self.fitToView == YES)
-        {
-            // We are in Fit to View mode so, we have to get the ratio for height and width against the window
-            // size so we can scale from there.
-            imageScaledSize = [self scaledSize:imageScaledSize toFit:frameSize];
-        }
-        else
-        {
-            // If the image is larger then the view, scale the image
-            if (imageScaledSize.width > frameSize.width || imageScaledSize.height > frameSize.height)
-            {
-                imageScaledSize = [self scaledSize:imageScaledSize toFit:frameSize];
-            }
-        }
+        [CATransaction begin];
+        CATransaction.disableActions = YES;
 
-        [NSAnimationContext beginGrouping];
-        [[NSAnimationContext currentContext] setDuration:0];
+        CGFloat width = imageScaledSize.width;
+        CGFloat height = imageScaledSize.height;
 
-        // Resize the CALayers
-        CGRect backRect = CGRectMake(0, 0, imageScaledSize.width + (BORDER_SIZE * 2), imageScaledSize.height + (BORDER_SIZE * 2));
-        CGRect pictureRect = CGRectMake(0, 0, imageScaledSize.width, imageScaledSize.height);
+        CGFloat offsetX = (frameSize.width - width) / 2;
+        CGFloat offsetY = (frameSize.height - height) / 2;
 
-        backRect = CGRectIntegral(backRect);
-        pictureRect = CGRectIntegral(pictureRect);
+        NSRect alignedRect = [self backingAlignedRect:NSMakeRect(offsetX, offsetY, width, height) options:NSAlignAllEdgesNearest];
 
-        self.backLayer.bounds = backRect;
-        self.pictureLayer.bounds = pictureRect;
+        self.backLayer.frame = alignedRect;
+        self.pictureLayer.frame = NSInsetRect(alignedRect, borderSize, borderSize);
 
-        // Position the CALayers
-        CGPoint anchor = CGPointMake(floor((self.frame.size.width - pictureRect.size.width) / 2),
-                                     floor((self.frame.size.height - pictureRect.size.height) / 2));
-        [self.pictureLayer setPosition:anchor];
-
-        CGPoint backAchor = CGPointMake(anchor.x - BORDER_SIZE, anchor.y - BORDER_SIZE);
-        [self.backLayer setPosition:backAchor];
-        
-        [NSAnimationContext endGrouping];
-        
-        // Update the proprierties
-        self.scale = self.pictureLayer.frame.size.width / imageSize.width;
-        self.pictureFrame = self.pictureLayer.frame;
+        [CATransaction commit];
     }
 }
 
 /**
- * Given the size of the preview image to be shown, returns the best possible
- * size for the view.
+ * Given the size of the preview image to be shown,
+ *  returns the best possible size for the view.
  */
-- (NSSize)optimalViewSizeForImageSize:(NSSize)imageSize minSize:(NSSize)minSize
+- (NSSize)optimalViewSizeForImageSize:(NSSize)imageSize minSize:(NSSize)minSize scaleFactor:(CGFloat)scaleFactor
 {
-    if (self.window.backingScaleFactor != 1.0)
-    {
-        // HiDPI mode usually display everything
-        // with douple pixel count, but we don't
-        // want to double the size of the video
-        imageSize.height /= self.window.backingScaleFactor;
-        imageSize.width /= self.window.backingScaleFactor;
-    }
-
-    NSSize screenSize = self.window.screen.visibleFrame.size;
-    CGFloat maxWidth = screenSize.width;
-    CGFloat maxHeight = screenSize.height;
-
-    NSSize resultSize = imageSize;
-
-    if (resultSize.width > maxWidth || resultSize.height > maxHeight)
-    {
-        resultSize = [self scaledSize:resultSize toFit:screenSize];
-    }
+    NSSize resultSize = [self imageScaledSize:imageSize
+                                        toFit:self.window.screen.visibleFrame.size
+                                   borderSize:self.showBorder ? BORDER_SIZE : 0
+                                  scaleFactor:scaleFactor];
 
     // If necessary, grow to minimum dimensions to ensure controls overlay is not obstructed
     if (resultSize.width < minSize.width)
@@ -259,17 +243,31 @@
         resultSize.height = minSize.height;
     }
 
-    // Add the border
-    if (self.showBorder)
+    NSRect alignedRect = [self backingAlignedRect:NSMakeRect(0, 0, resultSize.width, resultSize.height)
+                                          options:NSAlignAllEdgesNearest];
+
+    return alignedRect.size;
+}
+
+#pragma mark - Accessibility
+
+- (BOOL)isAccessibilityElement
+{
+    return YES;
+}
+
+- (NSString *)accessibilityRole
+{
+    return NSAccessibilityImageRole;
+}
+
+- (NSString *)accessibilityLabel
+{
+    if (self.image)
     {
-        resultSize.width += BORDER_SIZE * 2;
-        resultSize.height += BORDER_SIZE * 2;
+        return [NSString stringWithFormat:NSLocalizedString(@"Preview Image, Size: %zu x %zu, Scale: %.0f%%", @"Preview -> accessibility label"), CGImageGetWidth(self.image), CGImageGetHeight(self.image), self.scale * 100];
     }
-
-    resultSize.width = floor(resultSize.width);
-    resultSize.height = floor(resultSize.height);
-
-    return resultSize;
+    return NSLocalizedString(@"No image", @"Preview -> accessibility label");
 }
 
 @end

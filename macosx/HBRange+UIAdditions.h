@@ -5,7 +5,7 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import <Foundation/Foundation.h>
-#import "HBRange.h"
+#import <HandBrakeKit/HBRange.h>
 
 @interface HBRange (UIAdditions)
 
@@ -16,4 +16,12 @@
 @property (nonatomic, readonly) BOOL secondsSelected;
 @property (nonatomic, readonly) BOOL framesSelected;
 
+@end
+
+#pragma mark - Value Transformers
+
+@interface HBTimeTransformer : NSValueTransformer
+@end
+
+@interface HBTimeInSecondsTransformer: NSValueTransformer
 @end

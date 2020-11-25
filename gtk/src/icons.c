@@ -1,13 +1,12 @@
 /*
  * icons.c
- * Copyright (C) John Stebbins 2008-2017 <stebbins@stebbins>
+ * Copyright (C) John Stebbins 2008-2020 <stebbins@stebbins>
  *
  * icons.c is free software.
  *
  * You may redistribute it and/or modify it under the terms of the
- * GNU General Public License, as published by the Free Software
- * Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * GNU General Public License version 2, as published by the Free Software
+ * Foundation.
  *
  * icons.c is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -30,13 +29,13 @@ ghb_load_icons()
 #if GTK_CHECK_VERSION(3, 14, 0)
     ghb_icons_register_resource();
     gtk_icon_theme_add_resource_path(gtk_icon_theme_get_default(),
-                                     "/org/handbrake/icons");
+                                     "/fr/handbrake/ghb/icons");
 #else
     ghb_icons_register_resource();
     GResource *icon_res = ghb_icons_get_resource();
 
     char ** children = g_resource_enumerate_children(icon_res,
-                                "/org/handbrake/icons/scalable/apps", 0, NULL);
+                            "/fr/handbrake/ghb/icons/scalable/apps", 0, NULL);
 
     if (children == NULL)
     {
@@ -46,8 +45,10 @@ ghb_load_icons()
     int ii;
     for (ii = 0; children[ii] != NULL; ii++)
     {
-        char *path = g_strdup_printf("/org/handbrake/icons/scalable/apps/%s",
-                                     children[ii]);
+        char * path;
+
+        path = g_strdup_printf("/fr/handbrake/ghb/icons/scalable/apps/%s",
+                               children[ii]);
         GBytes *gbytes = g_resource_lookup_data(icon_res, path, 0, NULL);
         gsize data_size;
         gconstpointer data = g_bytes_get_data(gbytes, &data_size);

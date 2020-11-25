@@ -8,16 +8,8 @@
 #import "HBAudioController.h"
 #import "HBJob.h"
 #import "HBCodingUtilities.h"
-#import "hb.h"
-
-NSString *keyAudioTrackIndex = @"keyAudioTrackIndex";
-NSString *keyAudioTrackName = @"keyAudioTrackName";
-NSString *keyAudioInputBitrate = @"keyAudioInputBitrate";
-NSString *keyAudioInputSampleRate = @"keyAudioInputSampleRate";
-NSString *keyAudioInputCodec = @"keyAudioInputCodec";
-NSString *keyAudioInputCodecParam = @"keyAudioInputCodecParam";
-NSString *keyAudioInputChannelLayout = @"keyAudioInputChannelLayout";
-NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
+#import "HBTitle.h"
+#import "handbrake/handbrake.h"
 
 #define DEFAULT_SAMPLERATE 48000
 
@@ -37,7 +29,7 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
         _container = HB_MUX_MKV;
         _sampleRate = 0;
         _bitRate = 160;
-        _mixdown = HB_AMIXDOWN_DOLBYPLII;
+        _mixdown = HB_AMIXDOWN_STEREO;
     }
     return self;
 }
@@ -45,7 +37,7 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
 - (instancetype)initWithTrackIdx:(NSUInteger)index
                        container:(int)container
                       dataSource:(id<HBAudioTrackDataSource>)dataSource
-                        delegate:(id<HBAudioTrackDelegate>)delegate;
+                        delegate:(id<HBAudioTrackDelegate>)delegate
 {
     self = [super init];
     if (self)
@@ -53,6 +45,7 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
         _dataSource = dataSource;
         _sourceTrackIdx = index;
         _container = container;
+        self.title = [dataSource sourceTrackAtIndex:_sourceTrackIdx].title;
 
         [self validateSettings];
 
@@ -99,6 +92,8 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
 
     if (!(self.undo.isUndoing || self.undo.isRedoing))
     {
+        self.title = [self.dataSource sourceTrackAtIndex:_sourceTrackIdx].title;
+
         [self validateSettings];
 
         if (oldIdx != sourceTrackIdx)
@@ -136,10 +131,10 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
     if (!(self.undo.isUndoing || self.undo.isRedoing) && !self.validating)
     {
         self.validating = YES;
-        [self.delegate encoderChanged];
         self.mixdown = [self sanatizeMixdownValue:self.mixdown];
         self.sampleRate = [self sanatizeSamplerateValue:self.sampleRate];
         self.bitRate = [self sanatizeBitrateValue:self.bitRate];
+        [self.delegate encoderChanged];
         self.validating = NO;
     }
 }
@@ -224,14 +219,30 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
     _drc = drc;
 }
 
+- (void)setTitle:(NSString *)title
+{
+    if ([title isEqualToString:@"Mono"] ||
+        [title isEqualToString:@"Stereo"] ||
+        [title isEqualToString:@"Surround"])
+    {
+        title = nil;
+    }
+
+    if (title != _title)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setTitle:_title];
+    }
+    _title = title;
+}
+
 #pragma mark - Validation
 
 - (int)sanatizeEncoderValue:(int)proposedEncoder
 {
     if (proposedEncoder)
     {
-        NSDictionary *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
-        int inputCodec = [sourceTrack[keyAudioInputCodec] intValue];
+        HBTitleAudioTrack *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
+        int inputCodec = sourceTrack.codec;
 
         hb_encoder_t *proposedEncoderInfo = hb_audio_encoder_get_from_codec(proposedEncoder);
 
@@ -251,7 +262,7 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
             }
         }
 
-        return HB_ACODEC_CA_AAC;
+        return hb_audio_encoder_get_default(self.container);
     }
     else
     {
@@ -261,8 +272,8 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
 
 - (int)sanatizeMixdownValue:(int)proposedMixdown
 {
-    NSDictionary *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
-    unsigned long long channelLayout = [sourceTrack[keyAudioInputChannelLayout] unsignedLongLongValue];
+    HBTitleAudioTrack *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
+    uint64_t channelLayout = sourceTrack.channelLayout;
 
     if (!hb_mixdown_is_supported(proposedMixdown, self.encoder, channelLayout))
     {
@@ -308,8 +319,8 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
 {
     NSMutableArray<NSString *> *encoders = [[NSMutableArray alloc] init];
 
-    NSDictionary *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
-    int inputCodec = [sourceTrack[keyAudioInputCodec] intValue];
+    HBTitleAudioTrack *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
+    int inputCodec = sourceTrack.codec;
 
     for (const hb_encoder_t *audio_encoder = hb_audio_encoder_get_next(NULL);
          audio_encoder != NULL;
@@ -339,8 +350,8 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
 {
     NSMutableArray<NSString *> *mixdowns = [[NSMutableArray alloc] init];
 
-    NSDictionary *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
-    unsigned long long channelLayout = [sourceTrack[keyAudioInputChannelLayout] unsignedLongLongValue];
+    HBTitleAudioTrack *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
+    uint64_t channelLayout = sourceTrack.channelLayout;
 
     for (const hb_mixdown_t *mixdown = hb_mixdown_get_next(NULL);
          mixdown != NULL;
@@ -438,10 +449,10 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
 
     if (retval)
     {
-        NSDictionary *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
+        HBTitleAudioTrack *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
 
-        int inputCodec = [sourceTrack[keyAudioInputCodec] intValue];
-        int inputCodecParam = [sourceTrack[keyAudioInputCodecParam] intValue];
+        int inputCodec = sourceTrack.codec;
+        int inputCodecParam = sourceTrack.codecParam;
         if (!hb_audio_can_apply_drc(inputCodec, inputCodecParam, self.encoder))
         {
             retval = NO;
@@ -525,6 +536,8 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
 
         copy->_gain = _gain;
         copy->_drc = _drc;
+
+        copy->_title = [_title copy];
     }
 
     return copy;
@@ -539,7 +552,7 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
 
 - (void)encodeWithCoder:(NSCoder *)coder
 {
-    [coder encodeInt:3 forKey:@"HBAudioTrackVersion"];
+    [coder encodeInt:4 forKey:@"HBAudioTrackVersion"];
 
     encodeInteger(_sourceTrackIdx);
     encodeInt(_container);
@@ -551,24 +564,31 @@ NSString *keyAudioTrackLanguageIsoCode = @"keyAudioTrackLanguageIsoCode";
 
     encodeDouble(_gain);
     encodeDouble(_drc);
+
+    encodeObject(_title);
 }
 
 - (instancetype)initWithCoder:(NSCoder *)decoder
 {
     self = [super init];
 
-    decodeInteger(_sourceTrackIdx);
-    decodeInt(_container);
+    decodeInteger(_sourceTrackIdx); if (_sourceTrackIdx < 0) { goto fail; }
+    decodeInt(_container); if (_container != HB_MUX_MP4 && _container != HB_MUX_MKV && _container != HB_MUX_WEBM) { goto fail; }
 
-    decodeInt(_encoder);
-    decodeInt(_mixdown);
-    decodeInt(_sampleRate);
-    decodeInt(_bitRate);
+    decodeInt(_encoder); if (_encoder < 0) { goto fail; }
+    decodeInt(_mixdown); if (_mixdown < 0) { goto fail; }
+    decodeInt(_sampleRate); if (_sampleRate < 0) { goto fail; }
+    decodeInt(_bitRate); if (_bitRate < -1) { goto fail; }
 
     decodeDouble(_gain);
     decodeDouble(_drc);
 
+    decodeObject(_title, NSString);
+
     return self;
+
+fail:
+    return nil;
 }
 
 @end

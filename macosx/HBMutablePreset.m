@@ -10,12 +10,13 @@
 
 @property (nonatomic, strong, nullable) NSMutableDictionary *content;
 - (void)cleanUp;
+- (void)resetBuiltInAndDefaultState;
 
 @end
 
 @implementation HBMutablePreset
 
-- (void)setObject:(id)obj forKey:(NSString *)key;
+- (void)setObject:(id)obj forKey:(NSString *)key
 {
     self.content[key] = obj;
 }
@@ -28,6 +29,11 @@
 - (void)cleanUp
 {
     [super cleanUp];
+}
+
+- (void)resetBuiltInAndDefaultState
+{
+    [super resetBuiltInAndDefaultState];
 }
 
 @end

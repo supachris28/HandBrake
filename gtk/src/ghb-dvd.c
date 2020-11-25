@@ -1,13 +1,12 @@
 /*
  * ghb-dvd.c
- * Copyright (C) John Stebbins 2008-2017 <stebbins@stebbins>
+ * Copyright (C) John Stebbins 2008-2020 <stebbins@stebbins>
  *
  * ghb-dvd.c is free software.
  *
  * You may redistribute it and/or modify it under the terms of the
- * GNU General Public License, as published by the Free Software
- * Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * GNU General Public License version 2, as published by the Free Software
+ * Foundation.
  *
  * ghb-dvd.c is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -251,7 +250,7 @@ anchor:
     if (type != 2) /* TAG_ID_AVDP */
         goto found;
 
-    /* get desriptor list address and block count */
+    /* get descriptor list address and block count */
     count = le32_to_cpu(vd->type.anchor.length) / bs;
     loc = le32_to_cpu(vd->type.anchor.location);
 
@@ -370,7 +369,7 @@ ghb_dvd_set_current(const gchar *name, signal_user_data_t *ud)
         {
             // I could go through the trouble to scan the connected drives and
             // verify that this device is connected and is a DVD.  But I don't
-            // think its neccessary.
+            // think its necessary.
             ud->current_dvd_device = resolved;
         }
         else

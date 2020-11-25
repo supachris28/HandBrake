@@ -1,13 +1,11 @@
 $(eval $(call import.MODULE.defs,LIBTHEORA,libtheora,LIBOGG LIBVORBIS))
 $(eval $(call import.CONTRIB.defs,LIBTHEORA))
 
-LIBTHEORA.FETCH.url     = https://download.handbrake.fr/handbrake/contrib/libtheora-1.1.0.tar.bz2
-LIBTHEORA.FETCH.url    += http://downloads.xiph.org/releases/theora/libtheora-1.1.0.tar.bz2
-LIBTHEORA.FETCH.sha256  = 74be9fe9f85d18c45bdcbb018cebf12c74e2234aeecb4d4c4cb92d80bdd287e2
+LIBTHEORA.FETCH.url     = https://github.com/HandBrake/HandBrake-contribs/releases/download/contribs/libtheora-1.1.1.tar.bz2
+LIBTHEORA.FETCH.url    += https://downloads.xiph.org/releases/theora/libtheora-1.1.1.tar.bz2
+LIBTHEORA.FETCH.sha256  = b6ae1ee2fa3d42ac489287d3ec34c5885730b1296f0801ae577a35193d3affbc
 
-# TODO: libtheora >= 1.1.1
-#LIBTHEORA.FETCH.url    = http://downloads.xiph.org/releases/theora/libtheora-1.1.1.tar.bz2
-#LIBTHEORA.FETCH.sha256 = b6ae1ee2fa3d42ac489287d3ec34c5885730b1296f0801ae577a35193d3affbc
+LIBTHEORA.CONFIGURE.bootstrap = rm -fr aclocal.m4 autom4te.cache configure; autoreconf -I m4 -fiv;
 
 LIBTHEORA.CONFIGURE.extra = \
     --disable-examples \
@@ -18,3 +16,14 @@ LIBTHEORA.CONFIGURE.extra = \
     --with-ogg=$(call fn.ABSOLUTE,$(CONTRIB.build/)) \
     --with-vorbis=$(call fn.ABSOLUTE,$(CONTRIB.build/)) \
     HAVE_PKG_CONFIG=no
+
+ifeq (1-msys,$(HOST.cross)-$(BUILD.system))
+    LIBTHEORA.CONFIGURE.args.build = --build=$(BUILD.machine)-unknown-linux-gnu
+endif
+
+ifeq (darwin,$(HOST.system))
+    ifneq ($(HOST.machine),$(BUILD.machine))
+        LIBTHEORA.CONFIGURE.args.host = --host=$(HOST.machine:arm64=aarch64)-$(HOST.vendor)-$(HOST.system)
+        LIBTHEORA.CONFIGURE.args.build = --build=$(BUILD.machine:arm64=aarch64)-$(BUILD.vendor)-$(BUILD.system)
+    endif
+endif

@@ -1,8 +1,9 @@
 {
     "Globals": {
+        "SkipDiskFreeCheck": false,
         "show_preview": false,
         "scan_source": "",
-        "volume_label": "New Video"
+        "volume": "New Video"
     },
     "OneTimeInitialization": {
         "title": "none"
@@ -40,6 +41,7 @@
         "MetaDescription": "",
         "MetaLongDescription": "",
         "PresetFullName": "/Regular/Normal",
+        "PresetCategory": "new",
         "preset_modified": false,
         "preset_reload": false,
         "PictureDisplayWidth": 720,
@@ -51,14 +53,14 @@
         "start_point": 1.0,
         "start_frame": -1,
         "title_selected": false,
-        "volume_label": "New Video",
+        "source_label": "New Video",
         "chapter_list": [],
         "vquality_type_bitrate": false,
         "vquality_type_constant": false,
-        "SrtLanguage": "und",
+        "ImportLanguage": "und",
         "SrtCodeset": "ISO-8859-1",
-        "SrtFile": "",
-        "SrtOffset": 0,
+        "ImportFile": "",
+        "ImportOffset": 0,
         "VideoFramerateCFR": false,
         "VideoFrameratePFR": false,
         "VideoFramerateVFR": true,
@@ -68,8 +70,11 @@
         "x264FastDecode": false
     },
     "Preferences": {
+        "ActivityFontSize": 8,
+        "DiskFreeCheck": true,
+        "DiskFreeLimit": 2000,
         "RemoveFinishedJobs": false,
-        "HideAdvancedVideoSettings": true,
+        "SyncTitleSettings": true,
         "AutoScan": false,
         "AddCC": false,
         "EncodeLogLocation": false,
@@ -91,7 +96,6 @@
         "preview_show_crop": false,
         "preview_x": -1,
         "preview_y": -1,
-        "show_presets": true,
         "UseM4v": true,
         "auto_name": true,
         "auto_name_template": "{source}",
@@ -102,6 +106,8 @@
         "WhenComplete": "notify",
         "SrtDir": "",
         "window_width": 1,
-        "window_height": 1
+        "window_height": 1,
+        "preset_window_width": 1,
+        "preset_window_height": 1
     }
 }

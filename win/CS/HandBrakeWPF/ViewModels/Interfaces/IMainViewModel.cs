@@ -11,7 +11,8 @@ namespace HandBrakeWPF.ViewModels.Interfaces
 {
     using System.Windows;
 
-    using HandBrakeWPF.Services.Presets.Model;
+    using HandBrakeWPF.Model;
+    using HandBrakeWPF.Services.Queue.Model;
 
     using EncodeTask = HandBrakeWPF.Services.Encode.Model.EncodeTask;
 
@@ -20,11 +21,6 @@ namespace HandBrakeWPF.ViewModels.Interfaces
     /// </summary>
     public interface IMainViewModel
     {
-        /// <summary>
-        /// Sets SelectedPreset.
-        /// </summary>
-        Preset SelectedPreset { set; }
-
         /// <summary>
         /// The preset select.
         /// </summary>
@@ -54,7 +50,10 @@ namespace HandBrakeWPF.ViewModels.Interfaces
         /// <returns>
         /// True if added, false if error
         /// </returns>
-        bool AddToQueue();
+        AddQueueError AddToQueue(bool batch = false);
+        void AddToQueueWithErrorHandling();
+        void AddAllToQueue();
+        void AddSelectionToQueue();
 
         /// <summary>
         /// The launch help.
@@ -103,7 +102,7 @@ namespace HandBrakeWPF.ViewModels.Interfaces
         /// <param name="task">
         /// The task.
         /// </param>
-        void EditQueueJob(EncodeTask task);
+        void EditQueueJob(QueueTask task);
 
         /// <summary>
         /// Shutdown this View
@@ -117,5 +116,16 @@ namespace HandBrakeWPF.ViewModels.Interfaces
         /// The e.
         /// </param>
         void FilesDroppedOnWindow(DragEventArgs e);
+
+        /// <summary>
+        /// Handle Tab Switching
+        /// </summary>
+        /// <param name="i">The Tab Number</param>
+        void SwitchTab(int i);
+
+        /// <summary>
+        /// Browse for and set a destination file.
+        /// </summary>
+        void BrowseDestination();
     }
 }

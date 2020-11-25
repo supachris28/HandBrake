@@ -14,24 +14,20 @@ TEST.GCC.L = $(CONTRIB.build/)lib
 TEST.libs = $(LIBHB.a)
 
 TEST.GCC.l = \
-        ass avresample avformat avcodec avfilter avutil mp3lame dvdnav \
-        dvdread fribidi \
-        samplerate swscale vpx theoraenc theoradec vorbis vorbisenc ogg x264 \
-        bluray freetype xml2 bz2 z jansson harfbuzz opus
+        ass avformat avfilter avcodec avutil swresample postproc mp3lame dvdnav \
+        dvdread fribidi swscale vpx theoraenc theoradec vorbis vorbisenc ogg \
+        x264 bluray freetype xml2 bz2 z jansson harfbuzz opus speex lzma dav1d \
+        turbojpeg
 
-ifneq ($(BUILD.system),darwin)
+ifeq (,$(filter $(HOST.system),darwin cygwin mingw))
     TEST.GCC.l += fontconfig
 endif
 
 ifeq (1,$(FEATURE.qsv))
-    TEST.GCC.D += USE_QSV HAVE_THREADS=1
-ifeq ($(BUILD.system),linux)
+    TEST.GCC.l += mfx
+ifneq (,$(filter $(HOST.system),linux freebsd))
     TEST.GCC.l += va va-drm
 endif
-endif
-
-ifeq (1,$(FEATURE.x265))
-    TEST.GCC.D += USE_X265
 endif
 
 ifeq (1,$(FEATURE.flatpak))
@@ -41,33 +37,50 @@ endif
 TEST.GCC.l += $(foreach m,$(MODULES.NAMES),$($m.OSL.libs))
 
 TEST.install.exe = $(DESTDIR)$(PREFIX/)bin/$(notdir $(TEST.exe))
+ifeq (1,$(FEATURE.flatpak))
+    TEST.metainfo.template = $(TEST.src/)fr.handbrake.HandBrakeCLI.metainfo.xml.template
+    TEST.metainfo = $(TEST.build/)fr.handbrake.HandBrakeCLI.metainfo.xml
+    TEST.install.metainfo = $(DESTDIR)$(PREFIX/)share/metainfo/$(notdir $(TEST.metainfo))
+endif
 
 ###############################################################################
 
 TEST.out += $(TEST.c.o)
 TEST.out += $(TEST.exe)
+ifeq (1,$(FEATURE.flatpak))
+    TEST.out += $(TEST.metainfo)
+endif
 
 BUILD.out += $(TEST.out)
 BUILD.out += $(TEST.install.exe)
+ifeq (1,$(FEATURE.flatpak))
+    BUILD.out += $(TEST.install.metainfo)
+endif
 
 ###############################################################################
 
 TEST.GCC.I += $(LIBHB.GCC.I)
 
-ifeq ($(BUILD.system),darwin)
-    TEST.GCC.f += IOKit CoreServices CoreText CoreGraphics AudioToolbox Foundation
+ifeq ($(HOST.system),darwin)
+    TEST.GCC.f += IOKit CoreServices CoreText CoreGraphics AudioToolbox VideoToolbox CoreMedia CoreVideo Foundation
     TEST.GCC.l += iconv
-else ifeq ($(BUILD.system),linux)
+else ifeq ($(HOST.system),linux)
     TEST.GCC.l += pthread dl m
-else ifeq ($(BUILD.system),kfreebsd)
+ifeq (1, $(FEATURE.numa))
+    TEST.GCC.l += numa
+endif
+else ifeq ($(HOST.system),kfreebsd)
     TEST.GCC.l += pthread dl m
-else ifeq ($(BUILD.system),solaris)
+else ifneq (,$(filter $(HOST.system),freebsd netbsd))
+    TEST.GCC.L += $(LOCALBASE)/lib
+    TEST.GCC.l += pthread m
+else ifeq ($(HOST.system),solaris)
     TEST.GCC.l += pthread nsl socket
-ifneq (,$(filter $(BUILD.release),2.10))
+ifneq (,$(filter $(HOST.release),2.10))
     TEST.GCC.l += iconv
 endif
     TEST.GCC.D += _POSIX_C_SOURCE=200112L __EXTENSIONS__
-else ifeq (1-mingw,$(BUILD.cross)-$(BUILD.system))
+else ifeq (1-mingw,$(HOST.cross)-$(HOST.system))
 ifeq ($(HAS.dlfcn),1)
     TEST.GCC.l += dl
 endif
@@ -76,7 +89,7 @@ ifeq (1,$(HAS.pthread))
 else
     TEST.GCC.l += pthreadGC2
 endif
-    TEST.GCC.l += iconv ws2_32 regex uuid ole32
+    TEST.GCC.l += bcrypt iconv ws2_32 regex uuid ole32
     TEST.GCC.D += PTW32_STATIC_LIB
     TEST.GCC.args.extra.exe++ += -static
-endif #   (1-mingw,$(BUILD.cross)-$(BUILD.system))
+endif #   (1-mingw,$(HOST.cross)-$(HOST.system))

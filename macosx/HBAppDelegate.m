@@ -6,27 +6,33 @@
 
 #import "HBAppDelegate.h"
 
+@import HandBrakeKit;
+
+#import "HBQueue.h"
+
 #import "HBUtilities.h"
-#import "HBPresetsManager.h"
-#import "HBPreset.h"
+#import "HBPresetsMenuBuilder.h"
 
 #import "HBPreferencesController.h"
 #import "HBQueueController.h"
+#import "HBQueueDockTileController.h"
 #import "HBOutputPanelController.h"
 #import "HBController.h"
-
-@import HandBrakeKit;
 
 #define PRESET_FILE @"UserPresets.json"
 #define QUEUE_FILE @"Queue.hbqueue"
 
-@interface HBAppDelegate ()
+@interface HBAppDelegate () <NSMenuItemValidation>
 
 @property (nonatomic, strong) HBPresetsManager *presetsManager;
-@property (unsafe_unretained) IBOutlet NSMenu *presetsMenu;
+@property (nonatomic, strong) HBPresetsMenuBuilder *presetsMenuBuilder;
+@property (nonatomic, unsafe_unretained) IBOutlet NSMenu *presetsMenu;
 
 @property (nonatomic, strong) HBPreferencesController *preferencesController;
+
+@property (nonatomic, strong) HBQueue *queue;
 @property (nonatomic, strong) HBQueueController *queueController;
+@property (nonatomic, strong) HBQueueDockTileController *queueDockTileController;
 
 @property (nonatomic, strong) HBOutputPanelController *outputPanel;
 
@@ -48,21 +54,20 @@
         [HBCore registerErrorHandler:^(NSString *error) {
             fprintf(stderr, "error: %s\n", error.UTF8String);
         }];
-        [HBCore setDVDNav:[[[NSUserDefaults standardUserDefaults] objectForKey:@"UseDvdNav"] boolValue]];
+        [HBCore setDVDNav:[NSUserDefaults.standardUserDefaults boolForKey:HBUseDvdNav]];
 
         _outputPanel = [[HBOutputPanelController alloc] init];
 
         // we init the HBPresetsManager
-        NSURL *appSupportURL = [HBUtilities appSupportURL];
+        NSURL *appSupportURL = HBUtilities.appSupportURL;
         _presetsManager = [[HBPresetsManager alloc] initWithURL:[appSupportURL URLByAppendingPathComponent:PRESET_FILE]];
 
         // Queue
-        _queueController = [[HBQueueController alloc] initWithURL:[appSupportURL URLByAppendingPathComponent:QUEUE_FILE]];
+        _queue = [[HBQueue alloc] initWithURL:[appSupportURL URLByAppendingPathComponent:QUEUE_FILE]];
+        _queueController = [[HBQueueController alloc] initWithQueue:_queue];
         _queueController.delegate = self;
-        _mainController = [[HBController alloc] initWithQueue:_queueController presetsManager:_presetsManager];
-
-        // Set the Growl Delegate
-        [GrowlApplicationBridge setGrowlDelegate:_queueController];
+        _queueDockTileController = [[HBQueueDockTileController alloc] initWithQueue:_queue dockTile:NSApplication.sharedApplication.dockTile image:NSApplication.sharedApplication.applicationIconImage];
+        _mainController = [[HBController alloc] initWithDelegate:self queue:_queue presetsManager:_presetsManager];
     }
     return self;
 }
@@ -80,35 +85,34 @@
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification
 {
-    [self buildPresetsMenu];
+    NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
 
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(buildPresetsMenu) name:HBPresetsChangedNotification object:nil];
+    // Reset "When done" action
+    if ([ud boolForKey:HBResetWhenDoneOnLaunch])
+    {
+        [ud setInteger:HBDoneActionDoNothing forKey:HBAlertWhenDone];
+    }
 
-    // Get the number of HandBrake instances currently running
-    NSUInteger instances = [NSRunningApplication runningApplicationsWithBundleIdentifier:[[NSBundle mainBundle] bundleIdentifier]].count;
+    if (@available (macOS 10.12.2, *))
+    {
+        NSApplication.sharedApplication.automaticCustomizeTouchBarMenuItemEnabled = YES;
+    }
+
+    self.presetsMenuBuilder = [[HBPresetsMenuBuilder alloc] initWithMenu:self.presetsMenu
+                                                                  action:@selector(selectPresetFromMenu:)
+                                                                    size:NSFont.systemFontSize
+                                                          presetsManager:self.presetsManager];
+    [self.presetsMenuBuilder build];
 
     // Open debug output window now if it was visible when HB was closed
-    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"OutputPanelIsOpen"])
+    if ([ud boolForKey:@"OutputPanelIsOpen"])
+    {
         [self showOutputPanel:nil];
-
-    // On Screen Notification
-    // We check to see if there is already another instance of hb running.
-    if (instances > 1)
-    {
-        NSAlert *alert = [[NSAlert alloc] init];
-        [alert setMessageText:NSLocalizedString(@"There is already an instance of HandBrake running.", nil)];
-        [alert setInformativeText:NSLocalizedString(@"The queue will be shared between the instances.", nil)];
-        [alert runModal];
-    }
-    else
-    {
-        [self.queueController setEncodingJobsAsPending];
-        [self.queueController removeCompletedJobs];
     }
 
     // Now we re-check the queue array to see if there are
     // any remaining encodes to be done
-    if (self.queueController.count)
+    if (self.queue.items.count)
     {
         [self showMainWindow:self];
         [self showQueueWindow:self];
@@ -116,8 +120,10 @@
     else
     {
         // Open queue window now if it was visible when HB was closed
-        if ([[NSUserDefaults standardUserDefaults] boolForKey:@"QueueWindowIsOpen"])
+        if ([ud boolForKey:@"QueueWindowIsOpen"])
+        {
             [self showQueueWindow:nil];
+        }
 
         [self showMainWindow:self];
         [self.mainController launchAction];
@@ -125,34 +131,26 @@
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
         // Remove encodes logs older than a month
-        if ([[NSUserDefaults standardUserDefaults] boolForKey:@"HBClearOldLogs"])
+        if ([ud boolForKey:HBClearOldLogs])
         {
             [self cleanEncodeLogs];
         }
 
-        // If we are a single instance it is safe to clean up the previews if there are any
-        // left over. This is a bit of a kludge but will prevent a build up of old instance
-        // live preview cruft. No danger of removing an active preview directory since they
-        // are created later in HBPreviewController if they don't exist at the moment a live
-        // preview encode is initiated.
-        if (instances == 1)
-        {
-            [self cleanPreviews];
-        }
+        [self cleanPreviews];
     });
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)app
 {
-    if (self.queueController.core.state != HBStateIdle)
+    if (self.queue.isEncoding)
     {
         NSAlert *alert = [[NSAlert alloc] init];
-        [alert setMessageText:NSLocalizedString(@"Are you sure you want to quit HandBrake?", nil)];
-        [alert setInformativeText:NSLocalizedString(@"If you quit HandBrake your current encode will be reloaded into your queue at next launch. Do you want to quit anyway?", nil)];
-        [alert addButtonWithTitle:NSLocalizedString(@"Quit", nil)];
-        [alert addButtonWithTitle:NSLocalizedString(@"Don't Quit", nil)];
+        [alert setMessageText:NSLocalizedString(@"Are you sure you want to quit HandBrake?", @"Quit Alert -> message")];
+        [alert setInformativeText:NSLocalizedString(@"If you quit HandBrake your current encode will be reloaded into your queue at next launch. Do you want to quit anyway?", @"Quit Alert -> informative text")];
+        [alert addButtonWithTitle:NSLocalizedString(@"Quit", @"Quit Alert -> first button")];
+        [alert addButtonWithTitle:NSLocalizedString(@"Don't Quit", @"Quit Alert -> second button")];
         [alert.buttons[1] setKeyEquivalent:@"\E"];
-        [alert setAlertStyle:NSCriticalAlertStyle];
+        [alert setAlertStyle:NSAlertStyleCritical];
 
         NSInteger result = [alert runModal];
 
@@ -173,11 +171,12 @@
 {
     [self.presetsManager savePresets];
 
-    [[NSUserDefaults standardUserDefaults] setBool:_queueController.window.isVisible forKey:@"QueueWindowIsOpen"];
-    [[NSUserDefaults standardUserDefaults] setBool:_outputPanel.window.isVisible forKey:@"OutputPanelIsOpen"];
+    [NSUserDefaults.standardUserDefaults setBool:_queueController.window.isVisible forKey:@"QueueWindowIsOpen"];
+    [NSUserDefaults.standardUserDefaults setBool:_outputPanel.window.isVisible forKey:@"OutputPanelIsOpen"];
 
     _mainController = nil;
     _queueController = nil;
+    _queue = nil;
 
     [HBCore closeGlobal];
 }
@@ -192,7 +191,7 @@
 {
     SEL action = menuItem.action;
 
-    if (action == @selector(rip:) || action == @selector(pause:))
+    if (action == @selector(toggleStartCancel:) || action == @selector(togglePauseResume:))
     {
         // Delegate the validation to the queue controller
         return [self.queueController validateMenuItem:menuItem];
@@ -216,7 +215,7 @@
  */
 - (void)cleanEncodeLogs
 {
-    NSURL *directoryUrl = [[HBUtilities appSupportURL] URLByAppendingPathComponent:@"EncodeLogs"];
+    NSURL *directoryUrl = [HBUtilities.appSupportURL URLByAppendingPathComponent:@"EncodeLogs"];
 
     if (directoryUrl)
     {
@@ -244,15 +243,15 @@
 
 - (void)cleanPreviews
 {
-    NSURL *previewDirectory = [[HBUtilities appSupportURL] URLByAppendingPathComponent:@"Previews"];
+    NSURL *previewDirectory = [HBUtilities.appSupportURL URLByAppendingPathComponent:@"Previews"];
 
     if (previewDirectory)
     {
-        NSArray *contents = [[NSFileManager defaultManager] contentsOfDirectoryAtURL:previewDirectory
-                                                          includingPropertiesForKeys:nil
-                                                                             options:NSDirectoryEnumerationSkipsSubdirectoryDescendants |
-                                                                                     NSDirectoryEnumerationSkipsPackageDescendants
-                                                                               error:NULL];
+        NSArray *contents = [NSFileManager.defaultManager contentsOfDirectoryAtURL:previewDirectory
+                                                        includingPropertiesForKeys:nil
+                                                                           options:NSDirectoryEnumerationSkipsSubdirectoryDescendants |
+                             NSDirectoryEnumerationSkipsPackageDescendants
+                                                                             error:NULL];
 
         NSFileManager *manager = [[NSFileManager alloc] init];
         for (NSURL *url in contents)
@@ -267,86 +266,31 @@
     }
 }
 
-#pragma mark - Menu actions
+#pragma mark - Rescan job
 
-- (IBAction)rip:(id)sender
+- (void)openJob:(HBJob *)job completionHandler:(void (^)(BOOL result))handler
 {
-    [self.queueController rip:self];
+    [self.mainController openJob:job completionHandler:handler];
 }
 
-- (IBAction)pause:(id)sender
+#pragma mark - Menu actions
+
+- (IBAction)toggleStartCancel:(id)sender
 {
-    [self.queueController togglePauseResume:self];
+    [self.queueController toggleStartCancel:sender];
+}
+
+- (IBAction)togglePauseResume:(id)sender
+{
+    [self.queueController togglePauseResume:sender];
 }
 
 - (IBAction)browseSources:(id)sender
 {
-    [self.mainController browseSources:self];
+    [self.mainController browseSources:sender];
 }
 
 #pragma mark - Presets Menu actions
-
-/**
- *  Adds the presets list to the menu.
- */
-- (void)buildPresetsMenu
-{
-    // First we remove all the preset menu items
-    // inserted previously
-    NSArray *menuItems = [self.presetsMenu.itemArray copy];
-    for (NSMenuItem *item in menuItems)
-    {
-        if (item.tag != -1)
-        {
-            [self.presetsMenu removeItem:item];
-        }
-    }
-
-    BOOL builtInSeparatorInserted = NO;
-    for (HBPreset *preset in self.presetsManager.root.children)
-    {
-        if (preset.isBuiltIn == NO && builtInSeparatorInserted == NO)
-        {
-            [self.presetsMenu addItem:[NSMenuItem separatorItem]];
-            builtInSeparatorInserted = YES;
-        }
-        [self.presetsMenu addItem:[self buildMenuItemWithPreset:preset]];
-    }
-}
-
-- (NSMenuItem *)buildMenuItemWithPreset:(HBPreset *)preset
-{
-    NSMenuItem *item = [[NSMenuItem alloc] init];
-    item.title = preset.name;
-    item.toolTip = preset.presetDescription;
-    item.tag = 2;
-
-    if (preset.isLeaf)
-    {
-        item.action = @selector(selectPresetFromMenu:);
-        item.representedObject = preset;
-
-        // Make the default preset font bold.
-        if ([preset isEqualTo:self.presetsManager.defaultPreset])
-        {
-            NSAttributedString *newTitle = [[NSAttributedString alloc] initWithString:preset.name
-                                                                           attributes:@{NSFontAttributeName: [NSFont boldSystemFontOfSize:14]}];
-            [item setAttributedTitle:newTitle];
-        }
-    }
-    else
-    {
-        NSMenu *menu = [[NSMenu alloc] init];
-        for (HBPreset *childPreset in preset.children)
-        {
-            [menu addItem:[self buildMenuItemWithPreset:childPreset]];
-        }
-
-        item.submenu = menu;
-    }
-
-    return item;
-}
 
 /**
  * We use this method to recreate new, updated factory presets
@@ -354,6 +298,11 @@
 - (IBAction)addFactoryPresets:(id)sender
 {
     [self.presetsManager generateBuiltInPresets];
+}
+
+- (IBAction)reloadPreset:(id)sender
+{
+    [self.mainController reloadPreset:sender];
 }
 
 #pragma mark - Show Window Menu Items
@@ -368,7 +317,7 @@
         _preferencesController = [[HBPreferencesController alloc] init];
     }
 
-    [self.preferencesController showWindow:self];
+    [self.preferencesController showWindow:sender];
 }
 
 /**
@@ -389,7 +338,7 @@
 
 - (IBAction)showPreviewWindow:(id)sender
 {
-    [self.mainController showPreviewWindow:self];
+    [self.mainController showPreviewWindow:sender];
 }
 
 /**
@@ -402,19 +351,52 @@
 
 - (IBAction)openHomepage:(id)sender
 {
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL
-                                            URLWithString:@"https://handbrake.fr/"]];
+    [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://handbrake.fr/"]];
 }
 
 - (IBAction)openForums:(id)sender
 {
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL
-                                            URLWithString:@"https://forum.handbrake.fr/"]];
+    [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://forum.handbrake.fr/"]];
 }
 - (IBAction)openUserGuide:(id)sender
 {
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL
-                                            URLWithString:@"https://handbrake.fr/docs/en/1.0.0/"]];
+    [NSWorkspace.sharedWorkspace openURL:HBUtilities.documentationURL];
+}
+
+@end
+
+@interface NSApplication (TouchBar) <NSTouchBarDelegate>
+@end
+
+@implementation NSApplication (TouchBar)
+
+static NSTouchBarItemIdentifier HBTouchBarMain = @"fr.handbrake.appDelegateTouchBar";
+static NSTouchBarItemIdentifier HBTouchBarOpen = @"fr.handbrake.openSource";
+
+- (NSTouchBar *)makeTouchBar
+{
+    NSTouchBar *bar = [[NSTouchBar alloc] init];
+    bar.delegate = self;
+
+    bar.defaultItemIdentifiers = @[HBTouchBarOpen];
+
+    return bar;
+}
+
+- (NSTouchBarItem *)touchBar:(NSTouchBar *)touchBar makeItemForIdentifier:(NSTouchBarItemIdentifier)identifier
+{
+    if ([identifier isEqualTo:HBTouchBarOpen])
+    {
+        NSCustomTouchBarItem *item = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
+        item.customizationLabel = NSLocalizedString(@"Open Source", @"Touch bar");
+
+        NSButton *button = [NSButton buttonWithTitle:NSLocalizedString(@"Open Source", @"Touch bar") target:nil action:@selector(browseSources:)];
+
+        item.view = button;
+        return item;
+    }
+
+    return nil;
 }
 
 @end

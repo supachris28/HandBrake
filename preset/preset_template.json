@@ -1,4 +1,5 @@
     {
+        "AlignAVStart": false,
         "AudioCopyMask": [
             "copy:aac",
             "copy:ac3",
@@ -11,7 +12,7 @@
         ],
         "AudioEncoderFallback": "ac3",
         "AudioLanguageList": [
-            "und"
+            "any"
         ],
         "AudioList": [
             {
@@ -37,6 +38,7 @@
         "FileFormat": "mp4",
         "Folder": false,
         "FolderOpen": false,
+        "InlineParameterSets": false,
         "Mp4HttpOptimize": false,
         "Mp4iPodCompatible": false,
         "PictureAutoCrop": true,
@@ -45,8 +47,9 @@
         "PictureRightCrop": 0,
         "PictureTopCrop": 0,
         "PictureDARWidth": 0,
-        "PictureDeblock": 0,
-        "PictureDeblockCustom": "qp=0:mode=2",
+        "PictureDeblockPreset": "off",
+        "PictureDeblockTune": "medium",
+        "PictureDeblockCustom": "strength=strong:thresh=20:blocksize=8",
         "PictureCombDetectCustom": "",
         "PictureCombDetectPreset": "off",
         "PictureDeinterlaceCustom": "",
@@ -56,6 +59,13 @@
         "PictureDenoiseFilter": "off",
         "PictureDenoisePreset": "medium",
         "PictureDenoiseTune": "none",
+        "PictureChromaSmoothCustom": "",
+        "PictureChromaSmoothPreset": "off",
+        "PictureChromaSmoothTune": "none",
+        "PictureSharpenCustom": "",
+        "PictureSharpenFilter": "off",
+        "PictureSharpenPreset": "medium",
+        "PictureSharpenTune": "none",
         "PictureDetelecine": "off",
         "PictureDetelecineCustom": "",
         "PictureItuPAR": false,
@@ -85,7 +95,7 @@
         ],
         "SubtitleTrackSelectionBehavior": "none",
         "VideoAvgBitrate": 1800,
-        "VideoColorMatrixCode": 0,
+        "VideoColorMatrixCodeOverride": 0,
         "VideoEncoder": "x264",
         "VideoFramerate": "auto",
         "VideoFramerateMode": "vfr",
@@ -99,7 +109,6 @@
         "VideoQualityType": 2,
         "VideoQualitySlider": 20.0,
         "VideoQSVDecode": false,
-        "VideoQSVAsyncDepth": 4,
         "VideoTwoPass": false,
         "VideoTurboTwoPass": false,
         "x264Option": "",

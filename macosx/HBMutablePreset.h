@@ -5,7 +5,7 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import <Foundation/Foundation.h>
-#import "HBPreset.h"
+#import <HandBrakeKit/HBPreset.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -14,10 +14,10 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @interface HBMutablePreset : HBPreset
 
-/**
- *  Removes unknown keys and normalizes values.
- */
+/// Removes unknown keys and normalizes values.
 - (void)cleanUp;
+
+- (void)resetBuiltInAndDefaultState;
 
 - (void)setObject:(id)obj forKey:(NSString *)key;
 - (void)setObject:(id)obj forKeyedSubscript:(NSString *)key;

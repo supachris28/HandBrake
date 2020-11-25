@@ -1,5 +1,5 @@
 /*  HBPresets.m $
- 
+
  This file is part of the HandBrake source code.
  Homepage: <http://handbrake.fr/>.
  It may be used under the terms of the GNU General Public License. */
@@ -10,7 +10,7 @@
 #import "HBUtilities.h"
 #import "NSJSONSerialization+HBAdditions.h"
 
-#include "preset.h"
+#include "handbrake/preset.h"
 
 NSString *HBPresetsChangedNotification = @"HBPresetsChangedNotification";
 
@@ -28,7 +28,7 @@ NSString *HBPresetsChangedNotification = @"HBPresetsChangedNotification";
     if (self)
     {
         // Init the root of the tree, it won't never be shown in the UI
-        _root = [[HBPreset alloc] initWithFolderName:@"Root" builtIn:YES];
+        _root = [[HBPreset alloc] initWithCategoryName:@"Root" builtIn:YES];
         _root.delegate = self;
     }
     return self;
@@ -47,12 +47,12 @@ NSString *HBPresetsChangedNotification = @"HBPresetsChangedNotification";
 
 #pragma mark - HBTreeNode delegate
 
-- (void)nodeDidChange:(id)node
+- (void)nodeDidChange:(HBTreeNode *)node
 {
-    [[NSNotificationCenter defaultCenter] postNotificationName:HBPresetsChangedNotification object:nil];
+    [NSNotificationCenter.defaultCenter postNotificationName:HBPresetsChangedNotification object:self];
 }
 
-- (void)treeDidRemoveNode:(id)node
+- (void)treeDidRemoveNode:(HBTreeNode *)node
 {
     if (node == self.defaultPreset)
     {
@@ -124,7 +124,7 @@ typedef NS_ENUM(NSUInteger, HBPresetLoadingResult) {
     HBPresetLoadingResultFailed
 };
 
-- (NSDictionary *)dictionaryWithPresetsAtURL:(NSURL *)url backup:(BOOL)backup result:(HBPresetLoadingResult *)result;
+- (NSDictionary *)dictionaryWithPresetsAtURL:(NSURL *)url backup:(BOOL)backup result:(HBPresetLoadingResult *)result
 {
     NSData *presetData = [[NSData alloc] initWithContentsOfURL:url];
 
@@ -180,7 +180,7 @@ typedef NS_ENUM(NSUInteger, HBPresetLoadingResult) {
     return nil;
 }
 
-- (void)loadPresetsFromURL:(NSURL *)url;
+- (void)loadPresetsFromURL:(NSURL *)url
 {
     HBPresetLoadingResult result;
     NSDictionary *presetsDict;
@@ -248,7 +248,7 @@ typedef NS_ENUM(NSUInteger, HBPresetLoadingResult) {
 
 - (BOOL)savePresetsToURL:(NSURL *)url
 {
-    return [self.root writeToURL:url atomically:YES format:HBPresetFormatJson removeRoot:YES];
+    return [self.root writeToURL:url atomically:YES removeRoot:YES error:NULL];
 }
 
 - (BOOL)savePresets
@@ -275,6 +275,11 @@ typedef NS_ENUM(NSUInteger, HBPresetLoadingResult) {
     [self.root removeObjectAtIndexPath:idx];
 }
 
+- (void)replacePresetAtIndexPath:(NSIndexPath *)idx withPreset:(HBPreset *)preset
+{
+    [self.root replaceObjectAtIndexPath:idx withObject:preset];
+}
+
 - (NSIndexPath *)indexPathOfPreset:(HBPreset *)preset
 {
     return [self.root indexPathOfObject:preset];
@@ -293,7 +298,7 @@ typedef NS_ENUM(NSUInteger, HBPresetLoadingResult) {
     __block HBPreset *firstBuiltInPreset = nil;
     __block BOOL defaultAlreadySetted = NO;
 
-    // Search for a possibile new default preset
+    // Search for a possible new default preset
     // Try to use "Normal" or the first user preset.
     [self.root enumerateObjectsUsingBlock:^(id obj, NSIndexPath *idx, BOOL *stop) {
         if ([obj isBuiltIn] && [obj isLeaf])
@@ -318,7 +323,10 @@ typedef NS_ENUM(NSUInteger, HBPresetLoadingResult) {
             defaultAlreadySetted = YES;
         }
 
-        [obj setIsDefault:NO];
+        if ([obj isDefault])
+        {
+            [obj setIsDefault:NO];
+        }
     }];
 
     if (defaultAlreadySetted)
@@ -359,7 +367,7 @@ typedef NS_ENUM(NSUInteger, HBPresetLoadingResult) {
 #pragma mark - Built In Generation
 
 /**
- * Built-in preset folders at the root of the hierarchy
+ * Built-in preset categories at the root of the hierarchy
  */
 - (void)generateBuiltInPresets
 {

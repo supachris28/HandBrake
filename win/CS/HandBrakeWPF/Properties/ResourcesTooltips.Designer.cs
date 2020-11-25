@@ -19,7 +19,7 @@ namespace HandBrakeWPF.Properties {
     // class via a tool like ResGen or Visual Studio.
     // To add or remove a member, edit your .ResX file then rerun ResGen
     // with the /str option, or rebuild your VS project.
-    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("System.Resources.Tools.StronglyTypedResourceBuilder", "4.0.0.0")]
+    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("System.Resources.Tools.StronglyTypedResourceBuilder", "16.0.0.0")]
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
     [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
     public class ResourcesTooltips {
@@ -63,15 +63,30 @@ namespace HandBrakeWPF.Properties {
         /// <summary>
         ///   Looks up a localized string similar to Custom Denoise parameters.
         /// 
-        ///NLMeans syntax: y-strength=y:y-origin-tune=y:y-patch-size=y:y-range=y:y-frame-count=y:y-prefilter=y:cb-strength=c:cb-origin-tune=c:cb-patch-size=c:cb-range=c:cb-frame-count=c:cb-prefilter=c:cr-strength=c:cr-origin-tune=c:cr-patch-size=c:cr-range=c:cr-frame-count=c:cr-prefilter=c
+        ///NLMeans syntax: y-strength=y:y-origin-tune=y:y-patch-size=y:y-range=y:y-frame-count=y:y-prefilter=y:cb-strength=c:cb-origin-tune=c:cb-patch-size=c:cb-range=c:cb-frame-count=c:cb-prefilter=c:cr-strength=c:cr-origin-tune=c:cr-patch-size=c:cr-range=c:cr-frame-count=c:cr-prefilter=c:threads=t
         ///
-        ///NLMeans default: y-strength=6:y-origin-tune=1:y-patch-size=7:y-range=3:y-frame-count=2:y-prefilter=0:cb-strength=6:cb-origin-tune=1:cb-patch-size=7:cb-range=3:cb-frame-count=2:cb-prefilter=0
-        ///
-        ///HQDN [rest of string was truncated]&quot;;.
+        ///NLMeans default: y-strength=6:y-origin-tune=1:y-patch-size=7:y-range=3:y-frame-count=2:y-prefilter=0:cb-strength=6:cb-origin-tune=1:cb-patch-size=7:cb-range=3:cb-frame-count=2:cb-prefilter [rest of string was truncated]&quot;;.
         /// </summary>
         public static string FilterView_CustomDenoiseParams {
             get {
                 return ResourceManager.GetString("FilterView_CustomDenoiseParams", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Custom Sharpen parameters.
+        ///
+        ///Unsharp syntax: y-strength=y:y-size=y:cb-strength=c:cb-size=c:cr-strength=c:cr-size=c
+        ///
+        ///Unsharp default: y-strength=0.25:y-size=7:cb-strength=0.25:cb-size=7
+        ///
+        ///Lapsharp syntax: y-strength=y:y-kernel=y:cb-strength=c:cb-kernel=c:cr-strength=c:cr-kernel=c
+        ///
+        ///Lapsharp default: y-strength=0.2:y-kernel=isolap:cb-strength=0.2:cb-kernel=isolap.
+        /// </summary>
+        public static string FilterView_CustomSharpenParams {
+            get {
+                return ResourceManager.GetString("FilterView_CustomSharpenParams", resourceCulture);
             }
         }
         
@@ -189,9 +204,7 @@ namespace HandBrakeWPF.Properties {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to This filter removes &apos;combing&apos; artifacts that are the result of telecining.
-        ///
-        ///Telecining is a process that adjusts film framerates that are 24fps to NTSC video frame rates which are 30fps..
+        ///   Looks up a localized string similar to Detelecine removes comb artifacts that are the result of telecine, a process for converting film frame rates to television frame rates..
         /// </summary>
         public static string FilterView_Detelecine {
             get {
@@ -249,11 +262,57 @@ namespace HandBrakeWPF.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Sharpening enhances the appearance of detail, especially edges. Overly strong Sharpen settings may damage picture quality by creating ringing artifacts and enhancing noise, which can reduce compression efficiency.
+        ///
+        ///Unsharp is a general purpose unsharp masking filter. It sharpens by blurring, then calculating the difference between the blurred picture and the original.
+        ///
+        ///Lapsharp sharpens using convolution kernels approximating Laplacian edge filters, sometimes producing higher quality results than unshar [rest of string was truncated]&quot;;.
+        /// </summary>
+        public static string FilterView_Sharpen {
+            get {
+                return ResourceManager.GetString("FilterView_Sharpen", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Sharpen filter preset. Sets the strength of the filter..
+        /// </summary>
+        public static string FilterView_SharpenPreset {
+            get {
+                return ResourceManager.GetString("FilterView_SharpenPreset", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Sharpen tune. Further adjusts the Sharpen preset to optimize settings for specific scenarios.
+        ///
+        ///None uses the default preset settings.
+        ///
+        ///Unsharp can be tuned for Ultrafine, Fine, Medium, Coarse, or Very Coarse sharpening. Select one based on the output picture resolution and fineness of detail to enhance.
+        ///
+        ///Lapsharp&apos;s Film tune refines settings for use with most live action content. Film uses an isotropic Laplacian kernel to sharpen all edges similarly, and luminance (brightness) information is sharpened [rest of string was truncated]&quot;;.
+        /// </summary>
+        public static string FilterView_SharpenTune {
+            get {
+                return ResourceManager.GetString("FilterView_SharpenTune", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Add a new preset..
         /// </summary>
         public static string MainView_AddPreset {
             get {
                 return ResourceManager.GetString("MainView_AddPreset", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Aligns the initial timestamps of all audio and video streams by inserting blank frames or dropping frames. May improve audio/video sync for broken players that do not honor MP4 edit lists..
+        /// </summary>
+        public static string MainView_AlignAVStart {
+            get {
+                return ResourceManager.GetString("MainView_AlignAVStart", resourceCulture);
             }
         }
         
@@ -294,6 +353,15 @@ namespace HandBrakeWPF.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to The end point for this range..
+        /// </summary>
+        public static string MainView_EndPoint {
+            get {
+                return ResourceManager.GetString("MainView_EndPoint", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Add a special MP4 marker to allow playback on vintage iPod 5th Generation devices circa 2006. Other settings may affect compatibility..
         /// </summary>
         public static string MainView_IpodAtom {
@@ -330,6 +398,15 @@ namespace HandBrakeWPF.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Options to control presets..
+        /// </summary>
+        public static string MainView_PresetOptionsContextMenu {
+            get {
+                return ResourceManager.GetString("MainView_PresetOptionsContextMenu", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Presets are groups of encode settings tailored for specific scenarios. Select the one closest matching your intent.
         /// 
         /// Overrides all encode settings. Settings may be further adjusted after selecting a preset..
@@ -359,6 +436,15 @@ namespace HandBrakeWPF.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to The start point for this range..
+        /// </summary>
+        public static string MainView_StartPoint {
+            get {
+                return ResourceManager.GetString("MainView_StartPoint", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Title, or video clip, to encode.
         ///Blu-ray and DVD sources often have multiple titles, the longest of which is typically the main feature.
         /// </summary>
@@ -378,15 +464,23 @@ namespace HandBrakeWPF.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to When enabled the auto name system will always use the default path. 
+        ///When disabled, it will use the path in the destination box on the main window if populated, otherwise it will use the default path..
+        /// </summary>
+        public static string OptionsView_AlwaysUseDefaultPath {
+            get {
+                return ResourceManager.GetString("OptionsView_AlwaysUseDefaultPath", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Anamorphic allows arbitrary storage dimensions while preserving the original aspect during playback.
         ///
-        ///Off disables anamorphic. Video storage dimensions and display dimensions will be identical. Only useful for compatibility with certain legacy devices.
+        ///None disables anamorphic. Video storage dimensions and display dimensions will be identical. Only useful for compatibility with certain legacy devices.
         ///
-        ///Auto maximizes storage resolution while preserving the original display aspect ratio. Recommended.
+        ///Automatic maximizes storage resolution while preserving the original display aspect ratio. Recommended.
         ///
-        ///Loose is similar to Auto, but attempts to preserve the storage aspect ratio. This can result in a slight storage resolution loss compared to Auto.
-        ///
-        ///Cu [rest of string was truncated]&quot;;.
+        ///Loose is similar to Auto, but attempts to preserve the storage aspect ratio. This can result in a slight storage resolution loss compared to Auto. [rest of string was truncated]&quot;;.
         /// </summary>
         public static string PictureSettingsView_Anamorphic {
             get {
@@ -537,15 +631,6 @@ namespace HandBrakeWPF.Properties {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Use advanced options Tab for x264 settings..
-        /// </summary>
-        public static string Video_AdvancedOptions {
-            get {
-                return ResourceManager.GetString("Video_AdvancedOptions", resourceCulture);
-            }
-        }
-        
-        /// <summary>
         ///   Looks up a localized string similar to Set the average bitrate.
         ///
         ///The instantaneous bitrate can be much higher or lower at any point in time.
@@ -579,7 +664,7 @@ namespace HandBrakeWPF.Properties {
         /// <summary>
         ///   Looks up a localized string similar to Tune settings to optimize for common scenarios.
         ///
-        ///This can improve effeciency for particular source characteristics or set
+        ///This can improve efficiency for particular source characteristics or set
         ///characteristics of the output file.  Changes will be applied after the
         ///preset but before all other parameters..
         /// </summary>

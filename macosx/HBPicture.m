@@ -9,8 +9,9 @@
 
 #import "HBCodingUtilities.h"
 #import "HBMutablePreset.h"
+#import "NSDictionary+HBAdditions.h"
 
-#include "hb.h"
+#include "handbrake/handbrake.h"
 
 NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
 
@@ -18,6 +19,8 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
 
 @property (nonatomic, readwrite, getter=isValidating) BOOL validating;
 @property (nonatomic, readwrite, getter=areNotificationsEnabled) BOOL notificationsEnabled;
+
+@property (nonatomic, readonly) int modulus;
 
 @property (nonatomic, readwrite) int keep;
 @property (nonatomic, readwrite) BOOL darUpdated;
@@ -40,14 +43,20 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
     if (self)
     {
         // Set some values if we ever need a fake instance
-        _width = 1280;
-        _height = 720;
+        _maxWidth = 1920;
+        _maxHeight = 1080;
 
-        _sourceWidth = 1280;
-        _sourceHeight = 720;
+        _width = 1920;
+        _height = 1080;
+
+        _sourceWidth = 1920;
+        _sourceHeight = 1080;
 
         _anamorphicMode = HBPictureAnarmophicModeNone;
-        _modulus = 2;
+
+        _paddingMode = HBPicturePaddingModeNone;
+        _paddingColorMode = HBPicturePaddingColorModeBlack;
+        _paddingColorCustom = @"";
 
         _parWidth = 1;
         _parHeight = 1;
@@ -88,11 +97,191 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
 {
     if (self.areNotificationsEnabled)
     {
-        [[NSNotificationCenter defaultCenter] postNotification: [NSNotification notificationWithName:HBPictureChangedNotification
+        [NSNotificationCenter.defaultCenter postNotification:[NSNotification notificationWithName:HBPictureChangedNotification
                                                                                               object:self
                                                                                             userInfo:nil]];
     }
 }
+
+#pragma mark - Rotate
+
+- (void)setRotate:(int)rotate
+{
+    if (rotate != _rotate)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setRotate:_rotate];
+    }
+    _rotate = rotate;
+    [self postChangedNotification];
+}
+
+#pragma mark - Flip
+
+- (void)setFlip:(BOOL)flip
+{
+    if (flip != _flip)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setFlip:_flip];
+    }
+    _flip = flip;
+    [self postChangedNotification];
+}
+
+#pragma mark - Resolution limit
+
+- (void)setResolutionLimitMode:(HBPictureResolutionLimitMode)resolutionLimit
+{
+    if (resolutionLimit != _resolutionLimitMode)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setResolutionLimitMode:_resolutionLimitMode];
+    }
+    _resolutionLimitMode = resolutionLimit;
+
+    if (!(self.undo.isUndoing || self.undo.isRedoing))
+    {
+        switch (resolutionLimit) {
+            case HBPictureResolutionLimitModeNone:
+                self.maxWidth = HB_MAX_WIDTH;
+                self.maxHeight = HB_MAX_HEIGHT;
+                break;
+            case HBPictureResolutionLimitMode8K:
+                self.maxWidth = 7680;
+                self.maxHeight = 4320;
+                break;
+            case HBPictureResolutionLimitMode4K:
+                self.maxWidth = 3840;
+                self.maxHeight = 2160;
+                break;
+            case HBPictureResolutionLimitMode1440p:
+                self.maxWidth = 2560;
+                self.maxHeight = 1440;
+                break;
+            case HBPictureResolutionLimitMode1080p:
+                self.maxWidth = 1920;
+                self.maxHeight = 1080;
+                break;
+            case HBPictureResolutionLimitMode720p:
+                self.maxWidth = 1280;
+                self.maxHeight = 720;
+                break;
+            case HBPictureResolutionLimitMode576p:
+                self.maxWidth = 720;
+                self.maxHeight = 576;
+                break;
+            case HBPictureResolutionLimitMode480p:
+                self.maxWidth = 720;
+                self.maxHeight = 480;
+                break;
+            case HBPictureResolutionLimitModeCustom:
+                break;
+        }
+    }
+
+    if (!self.isValidating)
+    {
+        [self validateSettings];
+    }
+}
+
+- (void)setMaxWidth:(int)maxWidth
+{
+    if (maxWidth != _maxWidth)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setMaxWidth:_maxWidth];
+    }
+    _maxWidth = maxWidth;
+
+    if (!self.isValidating)
+    {
+        [self validateSettings];
+    }
+}
+
+- (BOOL)validateMaxWidth:(id *)ioValue error:(NSError * __autoreleasing *)outError
+{
+    BOOL retval = YES;
+
+    if (nil != *ioValue)
+    {
+        int value = [*ioValue intValue];
+
+        if (value >= HB_MAX_WIDTH)
+        {
+            *ioValue = @(HB_MAX_WIDTH);
+        }
+        else if (value <= HB_MIN_WIDTH)
+        {
+            *ioValue = @(HB_MIN_WIDTH);
+        }
+    }
+
+    return retval;
+}
+
+- (void)setMaxHeight:(int)maxHeight
+{
+    if (maxHeight != _maxHeight)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setMaxHeight:_maxHeight];
+    }
+    _maxHeight = maxHeight;
+
+    if (!self.isValidating)
+    {
+        [self validateSettings];
+    }
+}
+
+- (BOOL)validateMaxHeight:(id *)ioValue error:(NSError * __autoreleasing *)outError
+{
+    BOOL retval = YES;
+
+    if (nil != *ioValue)
+    {
+        int value = [*ioValue intValue];
+
+        if (value >= HB_MAX_HEIGHT)
+        {
+            *ioValue = @(HB_MAX_HEIGHT);
+        }
+        else if (value <= HB_MIN_HEIGHT)
+        {
+            *ioValue = @(HB_MIN_HEIGHT);
+        }
+    }
+
+    return retval;
+}
+
+- (void)setAllowUpscaling:(BOOL)allowUpscaling
+{
+    if (allowUpscaling != _allowUpscaling)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setAllowUpscaling:_allowUpscaling];
+    }
+    _allowUpscaling = allowUpscaling;
+
+    if (!self.isValidating)
+    {
+        [self validateSettings];
+    }
+}
+
+- (void)setUseMaximumSize:(BOOL)useMaximumSize
+{
+    if (useMaximumSize != _useMaximumSize)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setUseMaximumSize:_useMaximumSize];
+    }
+    _useMaximumSize = useMaximumSize;
+
+    if (!self.isValidating)
+    {
+        [self validateSettings];
+    }
+}
+
+#pragma mark - Size
 
 - (void)setWidth:(int)width
 {
@@ -122,9 +311,9 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
         {
             *ioValue = @(self.maxWidth);
         }
-        else if (value <= 32)
+        else if (value <= HB_MIN_WIDTH)
         {
-            *ioValue = @32;
+            *ioValue = @(HB_MIN_WIDTH);
         }
         else if (value != roundedValue)
         {
@@ -162,9 +351,9 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
         {
             *ioValue = @(self.maxHeight);
         }
-        else if (value <= 32)
+        else if (value <= HB_MIN_HEIGHT)
         {
-            *ioValue = @32;
+            *ioValue = @(HB_MIN_HEIGHT);
         }
         else if (value != roundedValue)
         {
@@ -214,6 +403,8 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
         [self validateSettings];
     }
 }
+
+#pragma mark - Crop
 
 - (void)setCropTop:(int)cropTop
 {
@@ -269,52 +460,36 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
 
 - (BOOL)validateCropTop:(id *)ioValue error:(NSError * __autoreleasing *)outError
 {
-    [self validateVCrop:ioValue];
+    [self validateCrop:ioValue max:self.maxTopCrop];
     return YES;
 }
 
 - (BOOL)validateCropBottom:(id *)ioValue error:(NSError * __autoreleasing *)outError
 {
-    [self validateVCrop:ioValue];
+    [self validateCrop:ioValue max:self.maxBottomCrop];
     return YES;
 }
 
 - (BOOL)validateCropLeft:(id *)ioValue error:(NSError * __autoreleasing *)outError
 {
-    [self validateHCrop:ioValue];
+    [self validateCrop:ioValue max:self.maxLeftCrop];
     return YES;
 }
 
 - (BOOL)validateCropRight:(id *)ioValue error:(NSError * __autoreleasing *)outError
 {
-    [self validateHCrop:ioValue];
+    [self validateCrop:ioValue max:self.maxRightCrop];
     return YES;
 }
 
-- (void)validateHCrop:(NSNumber **)ioValue
+- (void)validateCrop:(NSNumber **)ioValue  max:(int)maxCrop
 {
     if (nil != *ioValue)
     {
         int value = [*ioValue intValue];
-        if (value >= self.maxHorizontalCrop)
+        if (value >= maxCrop)
         {
-            *ioValue =  @(self.maxHorizontalCrop);
-        }
-        else if (value < 0)
-        {
-            *ioValue = @0;
-        }
-    }
-}
-
-- (void)validateVCrop:(NSNumber **)ioValue
-{
-    if (nil != *ioValue)
-    {
-        int value = [*ioValue intValue];
-        if (value >= self.maxVerticalCrop)
-        {
-            *ioValue =  @(self.maxVerticalCrop);
+            *ioValue =  @(maxCrop);
         }
         else if (value < 0)
         {
@@ -345,6 +520,130 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
         [self validateSettings];
     }
 }
+
+#pragma mark - Padding
+
+- (void)setPaddingTop:(int)paddingTop
+{
+    if (paddingTop != _paddingTop)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setPaddingTop:_paddingTop];
+    }
+    _paddingTop = paddingTop;
+    if (!self.isValidating)
+    {
+        [self validateSettings];
+    }
+}
+
+- (void)setPaddingBottom:(int)paddingBottom
+{
+    if (paddingBottom != _paddingBottom)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setPaddingBottom:_paddingBottom];
+    }
+    _paddingBottom = paddingBottom;
+    if (!self.isValidating)
+    {
+        [self validateSettings];
+    }
+}
+
+- (void)setPaddingLeft:(int)paddingLeft
+{
+    if (paddingLeft != _paddingLeft)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setPaddingLeft:_paddingLeft];
+    }
+    _paddingLeft = paddingLeft;
+    if (!self.isValidating)
+    {
+        [self validateSettings];
+    }
+}
+
+- (void)setPaddingRight:(int)paddingRight
+{
+    if (paddingRight != _paddingRight)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setPaddingRight:_paddingRight];
+    }
+    _paddingRight = paddingRight;
+    if (!self.isValidating)
+    {
+        [self validateSettings];
+    }
+}
+
+- (BOOL)validatePaddingTop:(id *)ioValue error:(NSError * __autoreleasing *)outError
+{
+    [self validatePadding:ioValue max:self.maxTopPadding];
+    return YES;
+}
+
+- (BOOL)validatePaddingBottom:(id *)ioValue error:(NSError * __autoreleasing *)outError
+{
+    [self validatePadding:ioValue max:self.maxBottomPadding];
+    return YES;
+}
+
+- (BOOL)validatePaddingLeft:(id *)ioValue error:(NSError * __autoreleasing *)outError
+{
+    [self validatePadding:ioValue max:self.maxLeftPadding];
+    return YES;
+}
+
+- (BOOL)validatePaddingRight:(id *)ioValue error:(NSError * __autoreleasing *)outError
+{
+    [self validatePadding:ioValue max:self.maxRightPadding];
+    return YES;
+}
+
+- (void)validatePadding:(NSNumber **)ioValue  max:(int)maxPadding
+{
+    if (nil != *ioValue)
+    {
+        int value = [*ioValue intValue];
+        if (value >= maxPadding)
+        {
+            *ioValue =  @(maxPadding);
+        }
+        else if (value < 0)
+        {
+            *ioValue = @0;
+        }
+    }
+}
+
+- (void)setPaddingMode:(HBPicturePaddingMode)paddingMode
+{
+    if (paddingMode != _paddingMode)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setPaddingMode:_paddingMode];
+    }
+    _paddingMode = paddingMode;
+
+    if (!self.isValidating)
+    {
+        [self validateSettings];
+    }
+}
+
+- (void)setPaddingColorMode:(HBPicturePaddingColorMode)paddingColorMode
+{
+    if (paddingColorMode != _paddingColorMode)
+    {
+        [[self.undo prepareWithInvocationTarget:self] setPaddingColorMode:_paddingColorMode];
+    }
+    _paddingColorMode = paddingColorMode;
+
+    if (!self.isValidating)
+    {
+        [self validateSettings];
+    }
+}
+
+#pragma mark - Anamorphic
 
 - (void)setAnamorphicMode:(HBPictureAnarmophicMode)anamorphicMode
 {
@@ -379,49 +678,86 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
     }
 }
 
-- (void)setModulus:(int)modulus
+- (int)modulus
 {
-    if (modulus != _modulus)
-    {
-        [[self.undo prepareWithInvocationTarget:self] setModulus:_modulus];
-    }
-    _modulus = modulus;
-    if (!self.isValidating)
-    {
-        [self validateSettings];
-    }
+    return 2;
 }
 
 #pragma mark - Max sizes
 
-+ (NSSet<NSString *> *)keyPathsForValuesAffectingMaxWidth
+- (int)maxTopCrop
 {
-    return [NSSet setWithObjects:@"cropTop", @"cropBottom", @"cropLeft", @"cropRight", nil];
+    return self.sourceHeight - self.cropBottom - HB_MIN_HEIGHT;
 }
 
-- (int)maxWidth
++ (NSSet<NSString *> *)keyPathsForValuesAffectingMaxBottomCrop
 {
-    return self.sourceWidth - self.cropRight - self.cropLeft;
+    return [NSSet setWithObjects:@"cropTop", nil];
 }
 
-+ (NSSet<NSString *> *)keyPathsForValuesAffectingMaxHeight
+- (int)maxBottomCrop
 {
-    return [NSSet setWithObjects:@"cropTop", @"cropBottom", @"cropLeft", @"cropRight", nil];
+    return self.sourceHeight - self.cropTop - HB_MIN_HEIGHT;
 }
 
-- (int)maxHeight
++ (NSSet<NSString *> *)keyPathsForValuesAffectingMaxLeftCrop
 {
-    return self.sourceHeight - self.cropTop - self.cropBottom;
+    return [NSSet setWithObjects:@"cropRight", nil];
 }
 
-- (int)maxVerticalCrop
+- (int)maxLeftCrop
 {
-    return self.sourceHeight / 2 - 2;
+    return self.sourceWidth - self.cropRight - HB_MIN_WIDTH;
 }
 
-- (int)maxHorizontalCrop
++ (NSSet<NSString *> *)keyPathsForValuesAffectingMaxRightCrop
 {
-    return self.sourceWidth / 2 - 2;
+    return [NSSet setWithObjects:@"cropLeft", nil];
+}
+
+- (int)maxRightCrop
+{
+    return self.sourceWidth - self.cropLeft - HB_MIN_WIDTH;
+}
+
++ (NSSet<NSString *> *)keyPathsForValuesAffectingMaxTopPadding
+{
+    return [NSSet setWithObjects:@"paddingBottom, maxHeight, height", nil];
+}
+
+- (int)maxTopPadding
+{
+    return self.maxHeight - self.height - self.paddingBottom;
+}
+
++ (NSSet<NSString *> *)keyPathsForValuesAffectingMaxBottomPadding
+{
+    return [NSSet setWithObjects:@"paddingTop, maxHeight, height", nil];
+}
+
+- (int)maxBottomPadding
+{
+    return self.maxHeight - self.height - self.paddingTop;
+}
+
++ (NSSet<NSString *> *)keyPathsForValuesAffectingMaxLeftPadding
+{
+    return [NSSet setWithObjects:@"paddingRight, maxWidth, width", nil];
+}
+
+- (int)maxLeftPadding
+{
+    return self.maxWidth - self.width - self.paddingRight;
+}
+
++ (NSSet<NSString *> *)keyPathsForValuesAffectingMaxRightPadding
+{
+    return [NSSet setWithObjects:@"paddingLeft, maxWidth, width", nil];
+}
+
+- (int)maxRightPadding
+{
+    return self.maxWidth - self.width - self.paddingLeft;
 }
 
 - (int)sourceDisplayWidth
@@ -462,19 +798,19 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
         srcGeo.par.num = self.sourceParNum;
         srcGeo.par.den = self.sourceParDen;
 
-        uiGeo.mode = self.anamorphicMode;
+        uiGeo.mode = (int)self.anamorphicMode;
         uiGeo.keep = self.keep;
         uiGeo.itu_par = 0;
         uiGeo.modulus = self.modulus;
 
         int crop[4] = {self.cropTop, self.cropBottom, self.cropLeft, self.cropRight};
         memcpy(uiGeo.crop, crop, sizeof(int[4]));
-        uiGeo.geometry.width = self.width;
-        uiGeo.geometry.height =  self.height;
+        uiGeo.geometry.width = self.useMaximumSize || self.maxWidth < self.width ? self.maxWidth : self.width;
+        uiGeo.geometry.height =  self.useMaximumSize || self.maxHeight < self.height ? self.maxHeight : self.height;
         // Modulus added to maxWidth/maxHeight to allow a small amount of
         // upscaling to the next mod boundary.
-        uiGeo.maxWidth = self.sourceWidth - crop[2] - crop[3] + self.modulus - 1;
-        uiGeo.maxHeight = self.sourceHeight - crop[0] - crop[1] + self.modulus - 1;
+        uiGeo.maxWidth = self.allowUpscaling || self.maxWidth < self.width ? self.maxWidth : self.sourceWidth - crop[2] - crop[3] + self.modulus - 1;
+        uiGeo.maxHeight = self.allowUpscaling || self.maxHeight < self.height ? self.maxHeight : self.sourceHeight - crop[0] - crop[1] + self.modulus - 1;
 
         hb_rational_t par = {self.parWidth, self.parHeight};
         uiGeo.geometry.par = par;
@@ -493,6 +829,39 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
         self.parWidth = resultGeo.par.num;
         self.parHeight = resultGeo.par.den;
         self.displayWidth = display_width;
+
+        int maxPaddingX = self.maxWidth - self.width;
+        int maxPaddingY = self.maxHeight - self.height;
+
+        switch (self.paddingMode)
+        {
+            case HBPicturePaddingModeNone:
+                self.paddingRight   = 0;
+                self.paddingLeft    = 0;
+                self.paddingTop     = 0;
+                self.paddingBottom  = 0;
+                break;
+            case HBPicturePaddingModeFill:
+                self.paddingRight   = maxPaddingX / 2;
+                self.paddingLeft    = maxPaddingX / 2;
+                self.paddingTop     = maxPaddingY / 2;
+                self.paddingBottom  = maxPaddingY / 2;
+                break;
+            case HBPicturePaddingModeFillHeight:
+                self.paddingRight   = 0;
+                self.paddingLeft    = 0;
+                self.paddingTop     = maxPaddingY / 2;
+                self.paddingBottom  = maxPaddingY / 2;
+                break;
+            case HBPicturePaddingModeFillWidth:
+                self.paddingRight   = maxPaddingX / 2;
+                self.paddingLeft    = maxPaddingX / 2;
+                self.paddingTop     = 0;
+                self.paddingBottom  = 0;
+                break;
+            case HBPicturePaddingModeCustom:
+                break;
+        }
     }
     self.validating = NO;
     self.keep = 0;
@@ -509,12 +878,20 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
 
     if (copy)
     {
+        copy->_rotate = _rotate;
+        copy->_flip = _flip;
+
+        copy->_resolutionLimitMode = _resolutionLimitMode;
+        copy->_maxWidth = _maxWidth;
+        copy->_maxHeight = _maxHeight;
+        copy->_allowUpscaling = _allowUpscaling;
+        copy->_useMaximumSize = _useMaximumSize;
+
         copy->_width = _width;
         copy->_height = _height;
 
         copy->_keepDisplayAspect = _keepDisplayAspect;
         copy->_anamorphicMode = _anamorphicMode;
-        copy->_modulus = _modulus;
 
         copy->_displayWidth = _displayWidth;
         copy->_parWidth = _parWidth;
@@ -530,6 +907,14 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
         copy->_autoCropBottom = _autoCropBottom;
         copy->_autoCropLeft = _autoCropLeft;
         copy->_autoCropRight = _autoCropRight;
+
+        copy->_paddingMode = _paddingMode;
+        copy->_paddingTop = _paddingTop;
+        copy->_paddingBottom = _paddingBottom;
+        copy->_paddingLeft = _paddingLeft;
+        copy->_paddingRight = _paddingRight;
+        copy->_paddingColorMode = _paddingColorMode;
+        copy->_paddingColorCustom = [_paddingColorCustom copy];
 
         copy->_sourceWidth = _sourceWidth;
         copy->_sourceHeight = _sourceHeight;
@@ -551,14 +936,22 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
 
 - (void)encodeWithCoder:(NSCoder *)coder
 {
-    [coder encodeInt:1 forKey:@"HBPictureVersion"];
+    [coder encodeInt:2 forKey:@"HBPictureVersion"];
+
+    encodeInt(_rotate);
+    encodeBool(_flip);
+
+    encodeInteger(_resolutionLimitMode);
+    encodeInt(_maxWidth);
+    encodeInt(_maxHeight);
+    encodeBool(_allowUpscaling);
+    encodeBool(_useMaximumSize);
 
     encodeInt(_width);
     encodeInt(_height);
 
     encodeBool(_keepDisplayAspect);
-    encodeInt(_anamorphicMode);
-    encodeInt(_modulus);
+    encodeInteger(_anamorphicMode);
 
     encodeInt(_displayWidth);
     encodeInt(_parWidth);
@@ -575,6 +968,14 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
     encodeInt(_autoCropLeft);
     encodeInt(_autoCropRight);
 
+    encodeInteger(_paddingMode);
+    encodeInt(_paddingTop);
+    encodeInt(_paddingBottom);
+    encodeInt(_paddingLeft);
+    encodeInt(_paddingRight);
+    encodeInteger(_paddingColorMode);
+    encodeObject(_paddingColorCustom);
+
     encodeInt(_sourceWidth);
     encodeInt(_sourceHeight);
     encodeInt(_sourceParNum);
@@ -585,44 +986,86 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
 {
     self = [super init];
 
-    decodeInt(_width);
-    decodeInt(_height);
+    decodeInt(_rotate); if (_rotate != 0 && _rotate != 90 && _rotate != 180 && _rotate != 270) { goto fail; }
+    decodeBool(_flip);
+
+    decodeInteger(_resolutionLimitMode);
+    if (_resolutionLimitMode < HBPictureResolutionLimitModeNone || _resolutionLimitMode > HBPictureResolutionLimitModeCustom)
+    {
+        goto fail;
+    }
+    decodeInt(_maxWidth); if (_maxWidth < 0) { goto fail; }
+    decodeInt(_maxHeight); if (_maxHeight < 0) { goto fail; }
+    decodeBool(_allowUpscaling);
+    decodeBool(_useMaximumSize);
+
+    decodeInt(_width); if (_width < 0) { goto fail; }
+    decodeInt(_height); if (_height < 0) { goto fail; }
 
     decodeBool(_keepDisplayAspect);
-    decodeInt(_anamorphicMode);
-    decodeInt(_modulus);
+    decodeInteger(_anamorphicMode);
+    if (_anamorphicMode < HBPictureAnarmophicModeNone || _anamorphicMode > HBPictureAnarmophicModeAuto)
+    {
+        goto fail;
+    }
 
-    decodeInt(_displayWidth);
-    decodeInt(_parWidth);
-    decodeInt(_parHeight);
+    decodeInt(_displayWidth); if (_displayWidth < 0) { goto fail; }
+    decodeInt(_parWidth); if (_parWidth < 0) { goto fail; }
+    decodeInt(_parHeight); if (_parHeight < 0) { goto fail; }
 
     decodeBool(_autocrop);
-    decodeInt(_cropTop);
-    decodeInt(_cropBottom);
-    decodeInt(_cropLeft);
-    decodeInt(_cropRight);
+    decodeInt(_cropTop); if (_cropTop < 0) { goto fail; }
+    decodeInt(_cropBottom); if (_cropBottom < 0) { goto fail; }
+    decodeInt(_cropLeft); if (_cropLeft < 0) { goto fail; }
+    decodeInt(_cropRight); if (_cropRight < 0) { goto fail; }
 
-    decodeInt(_autoCropTop);
-    decodeInt(_autoCropBottom);
-    decodeInt(_autoCropLeft);
-    decodeInt(_autoCropRight);
+    decodeInt(_autoCropTop); if (_autoCropTop < 0) { goto fail; }
+    decodeInt(_autoCropBottom); if (_autoCropBottom < 0) { goto fail; }
+    decodeInt(_autoCropLeft); if (_autoCropLeft < 0) { goto fail; }
+    decodeInt(_autoCropRight); if (_autoCropRight < 0) { goto fail; }
 
-    decodeInt(_sourceWidth);
-    decodeInt(_sourceHeight);
-    decodeInt(_sourceParNum);
-    decodeInt(_sourceParDen);
+    decodeInteger(_paddingMode);
+    if (_paddingMode < HBPicturePaddingModeNone || _paddingMode > HBPicturePaddingModeCustom)
+    {
+        goto fail;
+    }
+    decodeInt(_paddingTop); if (_paddingTop < 0) { goto fail; }
+    decodeInt(_paddingBottom); if (_paddingBottom < 0) { goto fail; }
+    decodeInt(_paddingLeft); if (_paddingLeft < 0) { goto fail; }
+    decodeInt(_paddingRight); if (_paddingRight < 0) { goto fail; }
+    decodeInteger(_paddingColorMode);
+    if (_paddingColorMode < HBPicturePaddingColorModeBlack || _paddingColorMode > HBPicturePaddingColorModeCustom)
+    {
+        goto fail;
+    }
+    decodeObject(_paddingColorCustom, NSString);
+
+    decodeInt(_sourceWidth); if (_sourceWidth < 0) { goto fail; }
+    decodeInt(_sourceHeight); if (_sourceHeight < 0) { goto fail; }
+    decodeInt(_sourceParNum); if (_sourceParNum < 0) { goto fail; }
+    decodeInt(_sourceParDen); if (_sourceParDen < 0) { goto fail; }
 
     _notificationsEnabled = YES;
-    
+
     return self;
+
+fail:
+    return nil;
 }
 
 #pragma mark - Presets
 
 - (void)writeToPreset:(HBMutablePreset *)preset
 {
+    preset[@"PictureRotate"] = [NSString stringWithFormat:@"angle=%d:hflip=%d", self.rotate, self.flip];
+
+    preset[@"PictureWidth"] = @(self.maxWidth == HB_MAX_WIDTH ? 0 : self.maxWidth);
+    preset[@"PictureHeight"] = @(self.maxHeight == HB_MAX_HEIGHT ? 0 : self.maxHeight);
+
+    preset[@"PictureAllowUpscaling"] = @(self.allowUpscaling);
+    preset[@"PictureUseMaximumSize"] = @(self.useMaximumSize);
+
     preset[@"PictureKeepRatio"] = @(self.keepDisplayAspect);
-    preset[@"PictureModulus"]   = @(self.modulus);
 
     switch (self.anamorphicMode) {
         case HB_ANAMORPHIC_NONE:
@@ -653,6 +1096,13 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
     preset[@"PictureBottomCrop"] = @(self.cropBottom);
     preset[@"PictureLeftCrop"]   = @(self.cropLeft);
     preset[@"PictureRightCrop"]  = @(self.cropRight);
+
+    // Padding
+    preset[@"PicturePadMode"] = @(self.paddingMode);
+    int width = self.width + self.paddingLeft + self.paddingRight;
+    int height = self.height + self.paddingTop + self.paddingBottom;
+    NSString *color = self.paddingColorCustom;
+    preset[@"PicturePad"] = [NSString stringWithFormat:@"width=%d:height=%d:color=%@:x=%d:y=%d", width, height, color, self.paddingLeft, self.paddingTop];
 }
 
 - (void)applyPreset:(HBPreset *)preset jobSettings:(NSDictionary *)settings
@@ -672,11 +1122,59 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
     self.validating = YES;
     self.notificationsEnabled = NO;
 
+    // Rotate
+    NSString *rotate = preset[@"PictureRotate"];
+    hb_dict_t *hbdict = hb_parse_filter_settings(rotate.UTF8String);
+    NSDictionary *dict = [[NSDictionary alloc] initWithHBDict:hbdict];
+    hb_value_free(&hbdict);
 
-    // Check to see if UsesPictureSettings is greater than 0, as 0 means use picture sizing "None"
-    // (2 is use max for source and 1 is use exact size when the preset was created) and the
-    // preset completely ignores any picture sizing values in the preset.
-    if (cropScale && [preset[@"UsesPictureSettings"] intValue])
+    self.rotate = [dict[@"angle"] intValue];
+    self.flip = [dict[@"hflip"] boolValue];
+
+    self.maxWidth = [preset[@"PictureWidth"] intValue];
+    self.maxHeight = [preset[@"PictureHeight"] intValue];
+
+    self.allowUpscaling = [preset[@"PictureAllowUpscaling"] boolValue];
+    self.useMaximumSize = [preset[@"PictureUseMaximumSize"] boolValue];
+
+    if (self.maxWidth == 0 && self.maxHeight == 0)
+    {
+        self.resolutionLimitMode = HBPictureResolutionLimitModeNone;
+    }
+    else if (self.maxWidth == 7680 && self.maxHeight == 4320)
+    {
+        self.resolutionLimitMode = HBPictureResolutionLimitMode8K;
+    }
+    else if (self.maxWidth == 3840 && self.maxHeight == 2160)
+    {
+        self.resolutionLimitMode = HBPictureResolutionLimitMode4K;
+    }
+    else if (self.maxWidth == 2560 && self.maxHeight == 1440)
+    {
+        self.resolutionLimitMode = HBPictureResolutionLimitMode1440p;
+    }
+    else if (self.maxWidth == 1920 && self.maxHeight == 1080)
+    {
+        self.resolutionLimitMode = HBPictureResolutionLimitMode1080p;
+    }
+    else if (self.maxWidth == 1280 && self.maxHeight == 720)
+    {
+        self.resolutionLimitMode = HBPictureResolutionLimitMode720p;
+    }
+    else if (self.maxWidth == 720 && self.maxHeight == 576)
+    {
+        self.resolutionLimitMode = HBPictureResolutionLimitMode576p;
+    }
+    else if (self.maxWidth == 720 && self.maxHeight == 480)
+    {
+        self.resolutionLimitMode = HBPictureResolutionLimitMode480p;
+    }
+    else
+    {
+        self.resolutionLimitMode = HBPictureResolutionLimitModeCustom;
+    }
+
+    if (cropScale)
     {
         // If Cropping is set to custom, then recall all four crop values from
         // when the preset was created and apply them
@@ -701,34 +1199,24 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
             self.cropRight  = [preset[@"PictureRightCrop"] intValue];
         }
 
-        // Set modulus
-        if (preset[@"PictureModulus"])
-        {
-            self.modulus = [preset[@"PictureModulus"]  intValue];
-        }
-        else
-        {
-            self.modulus = 16;
-        }
-
         // Assume max picture settings initially.
         self.keepDisplayAspect = [preset[@"PictureKeepRatio"] boolValue];
 
         if ([preset[@"PicturePAR"] isEqualToString:@"off"])
         {
-            self.anamorphicMode = HB_ANAMORPHIC_NONE;
+            self.anamorphicMode = (HBPictureAnarmophicMode)HB_ANAMORPHIC_NONE;
         }
         else if ([preset[@"PicturePAR"] isEqualToString:@"auto"])
         {
-            self.anamorphicMode = HB_ANAMORPHIC_AUTO;
+            self.anamorphicMode = (HBPictureAnarmophicMode)HB_ANAMORPHIC_AUTO;
         }
         else if ([preset[@"PicturePAR"] isEqualToString:@"custom"])
         {
-            self.anamorphicMode = HB_ANAMORPHIC_CUSTOM;
+            self.anamorphicMode = (HBPictureAnarmophicMode)HB_ANAMORPHIC_CUSTOM;
         }
         else
         {
-            self.anamorphicMode = HB_ANAMORPHIC_LOOSE;
+            self.anamorphicMode = (HBPictureAnarmophicMode)HB_ANAMORPHIC_LOOSE;
         }
 
         self.parWidth = [par[@"Num"] intValue];
@@ -738,6 +1226,28 @@ NSString * const HBPictureChangedNotification = @"HBPictureChangedNotification";
         self.height = [cropScale[@"height"] intValue];
 
         self.displayWidth = self.width * self.parWidth / self.parHeight;
+    }
+
+    // Padding
+    NSString *pad = preset[@"PicturePad"];
+    hb_dict_t *hbPadDict = hb_parse_filter_settings(pad.UTF8String);
+    NSDictionary *padDict = [[NSDictionary alloc] initWithHBDict:hbPadDict];
+    hb_value_free(&hbPadDict);
+
+    self.paddingMode = [preset[@"PicturePadMode"] intValue];
+    if (self.paddingMode == HBPicturePaddingModeCustom)
+    {
+        self.paddingLeft    = [padDict[@"x"] intValue];
+        self.paddingRight   = [padDict[@"width"] intValue] - self.width - self.paddingLeft;
+        self.paddingTop     = [padDict[@"y"] intValue];
+        self.paddingBottom  = [padDict[@"height"] intValue] - self.height - self.paddingTop;
+    }
+    else
+    {
+        self.paddingLeft   = 0;
+        self.paddingRight  = 0;
+        self.paddingTop    = 0;
+        self.paddingBottom = 0;
     }
 
     self.validating = NO;

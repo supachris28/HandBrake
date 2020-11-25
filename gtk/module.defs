@@ -6,6 +6,10 @@ GTK.build/ = $(BUILD/)gtk/
 
 GTK.CONFIGURE.stamp = $(GTK.build/).stamp.configure
 
+ifeq ($(HOST.system),netbsd)
+    LDFLAGS += -Wl,-R$(X11BASE)/lib
+endif
+
 ###############################################################################
 
 GTK.out += $(GTK.CONFIGURE.stamp)
@@ -14,8 +18,8 @@ BUILD.out += $(GTK.out)
 
 ###############################################################################
 
-ifeq (1-mingw,$(BUILD.cross)-$(BUILD.system))
-GTK.CONFIGURE.extra += --host=$(BUILD.spec)
+ifeq (1-mingw,$(HOST.cross)-$(HOST.system))
+GTK.CONFIGURE.extra += --host=$(HOST.spec)
 ifeq ($(HAS.dlfcn),1)
 	GTK.CONFIGURE.extra += --enable-dl
 endif
@@ -38,6 +42,9 @@ endif
 
 ifeq (1,$(FEATURE.x265))
 	GTK.CONFIGURE.extra += --enable-x265
+ifeq (1,$(FEATURE.numa))
+	GTK.CONFIGURE.extra += --enable-numa
+endif
 endif
 
 ifeq (1,$(FEATURE.qsv))
@@ -47,3 +54,9 @@ endif
 ifeq (1,$(FEATURE.flatpak))
 	GTK.CONFIGURE.extra += --enable-flatpak
 endif
+
+ifeq (1,$(FEATURE.gtk4))
+	GTK.CONFIGURE.extra += --enable-gtk4
+endif
+
+export HB.version HB.repo.date

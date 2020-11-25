@@ -12,13 +12,16 @@ namespace HandBrakeWPF.ViewModels
     using System.Collections.Generic;
     using System.Collections.ObjectModel;
     using System.ComponentModel;
+    using System.Diagnostics;
     using System.Linq;
+    using System.Windows.Navigation;
 
-    using HandBrake.ApplicationServices.Interop;
-    using HandBrake.ApplicationServices.Interop.Model.Encoding;
-    using HandBrake.ApplicationServices.Utilities;
+    using HandBrake.Interop.Interop;
+    using HandBrake.Interop.Interop.Model.Encoding;
+    using HandBrake.Interop.Utilities;
 
     using HandBrakeWPF.Model.Audio;
+    using HandBrakeWPF.Properties;
     using HandBrakeWPF.Services.Encode.Model;
     using HandBrakeWPF.Services.Encode.Model.Models;
     using HandBrakeWPF.Services.Presets.Model;
@@ -28,6 +31,11 @@ namespace HandBrakeWPF.ViewModels
     /// <summary>
     /// The Audio View Model
     /// </summary>
+    /// <remarks>
+    /// TODO:
+    /// - Support setting fallback encoder options for Passthru tracks.
+    /// - Mixdown Dropdown should only show mixdowns for the set encoder. Not all.
+    /// </remarks>
     public class AudioDefaultsViewModel : ViewModelBase, IAudioDefaultsViewModel
     {
         private BindingList<string> availableLanguages;
@@ -49,7 +57,6 @@ namespace HandBrakeWPF.ViewModels
             this.SelectedLangaugesToMove = new BindingList<string>();
             this.AvailableLanguages = new BindingList<string>();
             this.AudioEncoders = EnumHelper<AudioEncoder>.GetEnumList();
-            this.Mixdowns = new BindingList<HBMixdown>(HandBrakeEncoderHelpers.Mixdowns);
 
             this.SampleRates = new ObservableCollection<string> { "Auto" };
             foreach (var item in HandBrakeEncoderHelpers.AudioSampleRates)
@@ -58,6 +65,8 @@ namespace HandBrakeWPF.ViewModels
             }
 
             this.Setup((Preset)null, task);
+
+            this.Title = Resources.AudioViewModel_AudioDefaults;
         }
 
         #endregion
@@ -120,6 +129,8 @@ namespace HandBrakeWPF.ViewModels
                 this.NotifyOfPropertyChange(() => this.AudioBehaviours);
             }
         }
+
+        public bool IsApplied { get; set; }
 
         /// <summary>
         /// Gets SelectedLangauges.
@@ -336,16 +347,6 @@ namespace HandBrakeWPF.ViewModels
         public IEnumerable<AudioEncoder> AudioEncoders { get; set; }
 
         /// <summary>
-        /// Gets or sets AudioEncoders.
-        /// </summary>
-        public IEnumerable<HBMixdown> Mixdowns { get; set; }
-
-        /// <summary>
-        /// Gets or sets AudioBitrates.
-        /// </summary>
-        public IEnumerable<int> AudioBitrates { get; set; }
-
-        /// <summary>
         /// Gets or sets SampleRates.
         /// </summary>
         public IList<string> SampleRates { get; set; }
@@ -431,6 +432,11 @@ namespace HandBrakeWPF.ViewModels
             this.AudioBehaviours.SelectedLangauges.Clear();
         }
 
+        public void ResetApplied()
+        {
+            this.IsApplied = false;
+        }
+
         #endregion
 
         #region Methods
@@ -447,6 +453,7 @@ namespace HandBrakeWPF.ViewModels
         public void Setup(Preset preset, EncodeTask task)
         {
             // Reset
+            this.IsApplied = false;
             this.AudioBehaviours = new AudioBehaviours();
 
             // Setup for this Encode Task.
@@ -508,12 +515,39 @@ namespace HandBrakeWPF.ViewModels
             this.NotifyOfPropertyChange(() => this.Task);
 
             if (this.Task.OutputFormat == OutputFormat.Mp4 && 
-                (this.AudioEncoderFallback == AudioEncoder.ffflac || this.AudioEncoderFallback == AudioEncoder.ffflac24 || this.AudioEncoderFallback == AudioEncoder.Vorbis))
+                (this.AudioEncoderFallback == AudioEncoder.ffflac || this.AudioEncoderFallback == AudioEncoder.ffflac24 || this.AudioEncoderFallback == AudioEncoder.Vorbis || this.AudioEncoderFallback == AudioEncoder.Opus))
             {
                     this.AudioEncoderFallback = AudioEncoder.ffaac;
             }
+
+            if (this.Task.OutputFormat == OutputFormat.WebM &&
+                (this.AudioEncoderFallback != AudioEncoder.Opus && this.AudioEncoderFallback != AudioEncoder.Vorbis))
+            {
+                this.AudioEncoderFallback = AudioEncoder.Vorbis;
+            }
+            
+            if (this.Task.OutputFormat == OutputFormat.Mp4)
+            {
+                foreach (AudioBehaviourTrack track in this.BehaviourTracks.Where(track => track.Encoder == AudioEncoder.ffflac || track.Encoder == AudioEncoder.ffflac24 || track.Encoder == AudioEncoder.Opus || track.Encoder == AudioEncoder.Vorbis))
+                {
+                    track.Encoder = AudioEncoder.ffaac;
+                }
+            }
+
+            if (this.Task.OutputFormat == OutputFormat.WebM)
+            {
+                foreach (AudioBehaviourTrack track in this.BehaviourTracks.Where(track => track.Encoder != AudioEncoder.Vorbis && track.Encoder != AudioEncoder.Opus))
+                {
+                    track.Encoder = AudioEncoder.Vorbis;
+                }
+            }
         }
 
+        public void LaunchHelp()
+        {
+            Process.Start("https://handbrake.fr/docs/en/latest/advanced/audio-subtitle-defaults.html");
+        }
+        
         #endregion
     }
 }

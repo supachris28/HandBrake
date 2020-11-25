@@ -1,8 +1,6 @@
 ###############################################################################
 ##
-## Coded for minimum version of Python 2.7 .
-##
-## Python3 is incompatible.
+## This script is coded for Python 2.7 through Python 3.x
 ##
 ## Authors: konablend
 ##
@@ -40,8 +38,8 @@ class Tool(hb_distfile.Tool):
         self.parser.prog = self.name
         self.parser.usage = '%prog [OPTIONS] FILE'
         self.parser.description = 'Verify distfile data integrity.'
-        self.parser.add_option('--disable', default=False, action='store_true', help='do nothing and exit without error')
-        self.parser.add_option('--sha256', default=None, action='store', metavar='HASH', help='verify sha256 HASH against data')
+        self.parser.add_argument('--disable', default=False, action='store_true', help='do nothing and exit without error')
+        self.parser.add_argument('--sha256', default=None, action='store', metavar='HASH', help='verify sha256 HASH against data')
         self._parse()
 
     def _load_config2(self, parser, data):
@@ -50,7 +48,7 @@ class Tool(hb_distfile.Tool):
     def _scan(self, filename):
         self.verbosef('scanning %s\n' % filename)
         hasher = hashlib.sha256()
-        with open(filename, 'r') as o:
+        with open(filename, 'rb') as o:
             data_total = 0
             while True:
                 data = o.read(65536)
@@ -74,9 +72,12 @@ class Tool(hb_distfile.Tool):
         if self.options.disable:
             self.infof('%s failure; administratively disabled.\n' % self.name)
             sys.exit(0)
-        if len(self.args) != 1:
+        if len(self.args) < 1:
             raise error('no file specified')
-        filename = self.args[0]
+        if len(self.args) > 1:
+            filename = self.args[1]
+        else:
+            filename = self.args[0]
         if self.options.sha256:
             error.op = 'verify'
             r = self._verify(filename)
@@ -90,7 +91,7 @@ class Tool(hb_distfile.Tool):
         error = hb_distfile.ToolError(self.name)
         try:
             self._run(error)
-        except Exception, x:
+        except Exception as x:
             self.debug_exception()
             self.errln('%s failure; %s' % (error.op,x), exit=1)
 

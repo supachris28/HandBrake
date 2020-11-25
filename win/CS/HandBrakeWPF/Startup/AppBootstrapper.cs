@@ -16,6 +16,8 @@ namespace HandBrakeWPF.Startup
 
     using HandBrakeWPF.Services;
     using HandBrakeWPF.Services.Interfaces;
+    using HandBrakeWPF.Services.Logging;
+    using HandBrakeWPF.Services.Logging.Interfaces;
     using HandBrakeWPF.Services.Presets;
     using HandBrakeWPF.Services.Presets.Interfaces;
     using HandBrakeWPF.Services.Queue;
@@ -25,8 +27,8 @@ namespace HandBrakeWPF.Startup
     using HandBrakeWPF.ViewModels;
     using HandBrakeWPF.ViewModels.Interfaces;
 
-    using IEncode = HandBrakeWPF.Services.Encode.Interfaces.IEncode;
-    using LibEncode = HandBrakeWPF.Services.Encode.LibEncode;
+    using IEncode = Services.Encode.Interfaces.IEncode;
+    using LibEncode = Services.Encode.LibEncode;
 
     /// <summary>
     /// The Castle Bootstrapper
@@ -60,7 +62,8 @@ namespace HandBrakeWPF.Startup
             this.container.Singleton<IPrePostActionService, PrePostActionService>();
             this.container.Singleton<IUserSettingService, UserSettingService>();
             this.container.Singleton<IPresetService, PresetService>();
-            this.container.Singleton<IQueueProcessor, QueueProcessor>();
+            this.container.Singleton<IQueueService, QueueService>();
+            this.container.Singleton<HandBrakeWPF.Services.Logging.Interfaces.ILog, LogService>();
 
             // Commands
 
@@ -77,21 +80,25 @@ namespace HandBrakeWPF.Startup
             this.container.Singleton<ITitleSpecificViewModel, TitleSpecificViewModel>();
             this.container.Singleton<IQueueSelectionViewModel, QueueSelectionViewModel>();
             this.container.Singleton<ICountdownAlertViewModel, CountdownAlertViewModel>();
-            this.container.Singleton<IMiniViewModel, MiniViewModel>();
             this.container.Singleton<IStaticPreviewViewModel, StaticPreviewViewModel>();
-
+            this.container.Singleton<ISystemService, SystemService>();
+            this.container.Singleton<ILogInstanceManager, LogInstanceManager>();
+            this.container.Singleton<IPortService, PortService>();
+            
             // Tab Components
             this.container.Singleton<IAudioViewModel, AudioViewModel>();
-            this.container.Singleton<IX264ViewModel, X264ViewModel>();
             this.container.Singleton<IPictureSettingsViewModel, PictureSettingsViewModel>();
             this.container.Singleton<IChaptersViewModel, ChaptersViewModel>();
             this.container.Singleton<ISubtitlesViewModel, SubtitlesViewModel>();
             this.container.Singleton<IFiltersViewModel, FiltersViewModel>();
             this.container.Singleton<IVideoViewModel, VideoViewModel>();
             this.container.Singleton<IMetaDataViewModel, MetaDataViewModel>();
-
+            this.container.Singleton<ISummaryViewModel, SummaryViewModel>();
+            this.container.Singleton<IPresetManagerViewModel, PresetManagerViewModel>();
+            
             // Shell
             this.container.Singleton<IShellViewModel, ShellViewModel>();
+            this.container.Singleton<INotifyIconService, NotifyIconService>();
 
             base.Configure();
         }

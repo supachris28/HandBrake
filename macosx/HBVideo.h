@@ -5,7 +5,7 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import <Foundation/Foundation.h>
-#import "HBPresetCoding.h"
+#import <HandBrakeKit/HBPresetCoding.h>
 
 @class HBJob;
 
@@ -44,7 +44,6 @@ extern NSString * const HBVideoChangedNotification;
  *  Encoder specifics options
  */
 
-@property (nonatomic, readwrite) BOOL advancedOptions;
 @property (nonatomic, readwrite, copy) NSString *preset;
 @property (nonatomic, readwrite, copy) NSString *tune;
 @property (nonatomic, readwrite, copy) NSString *profile;

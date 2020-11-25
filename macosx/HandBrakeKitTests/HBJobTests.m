@@ -7,14 +7,7 @@
 #import <Cocoa/Cocoa.h>
 #import <XCTest/XCTest.h>
 
-#import "HBCore.h"
-#import "HBTitle.h"
-#import "HBJob.h"
-#import "HBPicture.h"
-#import "HBJob+UIAdditions.h"
-#import "HBPresetsManager.h"
-#import "HBPreset.h"
-#import "HBMutablePreset.h"
+@import HandBrakeKit;
 
 @interface HBJobTests : XCTestCase
 
@@ -40,13 +33,13 @@
 
     self.preset = self.manager.defaultPreset;
 
-    NSURL *sampleURL = [NSURL fileURLWithPath:@"test.mp4"];
+    NSURL *sampleURL = [NSURL fileURLWithPath:@"/test.mp4" isDirectory:NO];
 
     self.queue = dispatch_queue_create("fr.handbrake.testQueue", DISPATCH_QUEUE_SERIAL);
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 
     self.core = [[HBCore alloc] initWithLogLevel:1 queue:self.queue];
-    [self.core scanURL:sampleURL titleIndex:0 previews:1 minDuration:0 progressHandler:^(HBState state, HBProgress progress, NSString * _Nonnull info) {
+    [self.core scanURL:sampleURL titleIndex:0 previews:1 minDuration:0 keepPreviews:NO progressHandler:^(HBState state, HBProgress progress, NSString * _Nonnull info) {
 
     } completionHandler:^(HBCoreResult result) {
         dispatch_semaphore_signal(sem);
@@ -57,7 +50,7 @@
     self.title = self.core.titles.firstObject;
 
     self.job = [[HBJob alloc] initWithTitle:self.title andPreset:self.preset];
-    self.job.outputURL = [NSURL fileURLWithPath:@"/"];
+    self.job.outputURL = [NSURL fileURLWithPath:@"/" isDirectory:YES];
     self.job.outputFileName = @"Dest.mp4";
 }
 
@@ -83,7 +76,7 @@
 
     XCTAssertNotNil(self.job);
 
-    self.job.outputURL = [NSURL fileURLWithPath:@"/"];
+    self.job.outputURL = [NSURL fileURLWithPath:@"/" isDirectory:YES];
     self.job.outputFileName = @"Dest.mp4";
     [job applyPreset:preset];
 }
@@ -118,8 +111,6 @@
 - (void)testCustomAnamorphic
 {
     HBMutablePreset *preset = [self.preset mutableCopy];
-
-    preset[@"UsesPictureSettings"] = @1;
 
     preset[@"PictureWidth"] = @720;
     preset[@"PictureHeight"] = @576;

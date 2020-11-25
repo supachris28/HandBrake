@@ -9,6 +9,7 @@
 #import "HBJob+HBJobConversion.h"
 #import "HBDVDDetector.h"
 #import "HBUtilities.h"
+#import "HBImageUtilities.h"
 
 #import "HBStateFormatter+Private.h"
 #import "HBTitle+Private.h"
@@ -28,7 +29,7 @@ static void hb_error_handler(const char *errmsg)
     }
 }
 
-typedef void (^HBCoreCleanupHandler)();
+typedef void (^HBCoreCleanupHandler)(void);
 
 /**
  * Private methods of HBCore.
@@ -59,6 +60,9 @@ typedef void (^HBCoreCleanupHandler)();
 
 /// Cleanup handle, used for internal HBCore cleanup.
 @property (nonatomic, readwrite, copy) HBCoreCleanupHandler cleanupHandler;
+
+/// Progress
+@property (nonatomic, readwrite) NSProgress *progress;
 
 @end
 
@@ -92,7 +96,7 @@ typedef void (^HBCoreCleanupHandler)();
     return [self initWithLogLevel:0 queue:dispatch_get_main_queue()];
 }
 
-- (instancetype)initWithLogLevel:(int)level queue:(dispatch_queue_t)queue
+- (instancetype)initWithLogLevel:(NSInteger)level queue:(dispatch_queue_t)queue
 {
     self = [super init];
     if (self)
@@ -108,7 +112,7 @@ typedef void (^HBCoreCleanupHandler)();
         bzero(_hb_state, sizeof(hb_state_t));
         _logLevel = level;
 
-        _hb_handle = hb_init(level);
+        _hb_handle = hb_init((int)level);
         if (!_hb_handle)
         {
             return nil;
@@ -118,7 +122,7 @@ typedef void (^HBCoreCleanupHandler)();
     return self;
 }
 
-- (instancetype)initWithLogLevel:(int)level name:(NSString *)name
+- (instancetype)initWithLogLevel:(NSInteger)level name:(NSString *)name
 {
     self = [self initWithLogLevel:level queue:dispatch_get_main_queue()];
     if (self)
@@ -140,10 +144,10 @@ typedef void (^HBCoreCleanupHandler)();
     free(_hb_state);
 }
 
-- (void)setLogLevel:(int)logLevel
+- (void)setLogLevel:(NSInteger)logLevel
 {
     _logLevel = logLevel;
-    hb_log_level_set(_hb_handle, logLevel);
+    hb_log_level_set(_hb_handle, (int)logLevel);
 }
 
 - (void)preventSleep
@@ -181,7 +185,7 @@ typedef void (^HBCoreCleanupHandler)();
     NSAssert(url, @"[HBCore canScan:] called with nil url.");
 
 #ifdef __SANDBOX_ENABLED__
-    BOOL accessingSecurityScopedResource = [url startAccessingSecurityScopedResource];
+    __unused HBSecurityAccessToken *token = [HBSecurityAccessToken tokenWithObject:url];
 #endif
 
     if (![[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
@@ -204,10 +208,18 @@ typedef void (^HBCoreCleanupHandler)();
         if (detector.isVideoDVD)
         {
             lib = dlopen("libdvdcss.2.dylib", RTLD_LAZY);
+            if (!lib)
+            {
+                lib = dlopen("/usr/local/lib/libdvdcss.2.dylib", RTLD_LAZY);
+            }
         }
         else if (detector.isVideoBluRay)
         {
             lib = dlopen("libaacs.dylib", RTLD_LAZY);
+            if (!lib)
+            {
+                lib = dlopen("/usr/local/lib/libaacs.dylib", RTLD_LAZY);
+            }
         }
 
         if (lib)
@@ -217,6 +229,13 @@ typedef void (^HBCoreCleanupHandler)();
         }
         else
         {
+            const char *dlError = dlerror();
+
+            if (dlError)
+            {
+                [HBUtilities writeToActivityLog:"dlopen error: %s", dlError];
+            }
+
             // Notify the user that we don't support removal of copy protection.
             [HBUtilities writeToActivityLog:"%s, library not found for decrypting physical disc", self.name.UTF8String];
 
@@ -229,16 +248,13 @@ typedef void (^HBCoreCleanupHandler)();
     }
 
 #ifdef __SANDBOX_ENABLED__
-    if (accessingSecurityScopedResource)
-    {
-        [url stopAccessingSecurityScopedResource];
-    }
+    token = nil;
 #endif
 
     return YES;
 }
 
-- (void)scanURL:(NSURL *)url titleIndex:(NSUInteger)index previews:(NSUInteger)previewsNum minDuration:(NSUInteger)seconds progressHandler:(HBCoreProgressHandler)progressHandler completionHandler:(HBCoreCompletionHandler)completionHandler
+- (void)scanURL:(NSURL *)url titleIndex:(NSUInteger)index previews:(NSUInteger)previewsNum minDuration:(NSUInteger)seconds keepPreviews:(BOOL)keepPreviews progressHandler:(HBCoreProgressHandler)progressHandler completionHandler:(HBCoreCompletionHandler)completionHandler
 {
     NSAssert(self.state == HBStateIdle, @"[HBCore scanURL:] called while another scan or encode already in progress");
     NSAssert(url, @"[HBCore scanURL:] called with nil url.");
@@ -273,9 +289,9 @@ typedef void (^HBCoreCleanupHandler)();
 
     [self preventAutoSleep];
 
-    hb_scan(_hb_handle, url.path.fileSystemRepresentation,
+    hb_scan(_hb_handle, url.fileSystemRepresentation,
             (int)index, (int)previewsNum,
-            1, min_title_duration_ticks);
+            keepPreviews, min_title_duration_ticks);
 
     // Start the timer to handle libhb state changes
     [self startUpdateTimerWithInterval:0.2];
@@ -310,113 +326,15 @@ typedef void (^HBCoreCleanupHandler)();
 - (void)cancelScan
 {
     hb_scan_stop(_hb_handle);
-    [HBUtilities writeToActivityLog:"%s scan cancelled", self.name.UTF8String];
+    [HBUtilities writeToActivityLog:"%s scan canceled", self.name.UTF8String];
 }
 
 #pragma mark - Preview images
 
-- (CGImageRef)CGImageRotatedByAngle:(CGImageRef)imgRef angle:(CGFloat)angle flipped:(BOOL)flipped CF_RETURNS_RETAINED
-{
-    CGFloat angleInRadians = angle * (M_PI / 180);
-    CGFloat width = CGImageGetWidth(imgRef);
-    CGFloat height = CGImageGetHeight(imgRef);
-
-    CGRect imgRect = CGRectMake(0, 0, width, height);
-    CGAffineTransform transform = CGAffineTransformMakeRotation(angleInRadians);
-    CGRect rotatedRect = CGRectApplyAffineTransform(imgRect, transform);
-
-    CGColorSpaceRef colorSpace = CGImageGetColorSpace(imgRef);
-    CGContextRef bmContext = CGBitmapContextCreate(NULL,
-                                                   (size_t)rotatedRect.size.width,
-                                                   (size_t)rotatedRect.size.height,
-                                                   8,
-                                                   0,
-                                                   colorSpace,
-                                                   kCGImageAlphaPremultipliedFirst);
-    CGContextSetAllowsAntialiasing(bmContext, FALSE);
-    CGContextSetInterpolationQuality(bmContext, kCGInterpolationNone);
-
-    // Rotate
-    CGContextTranslateCTM(bmContext,
-                          + (rotatedRect.size.width / 2),
-                          + (rotatedRect.size.height / 2));
-    CGContextRotateCTM(bmContext, -angleInRadians);
-    CGContextTranslateCTM(bmContext,
-                          - (rotatedRect.size.width / 2),
-                          - (rotatedRect.size.height / 2));
-
-    // Flip
-    if (flipped)
-    {
-        CGAffineTransform flipHorizontal = CGAffineTransformMake(-1, 0, 0, 1, floor(rotatedRect.size.width), 0);
-        CGContextConcatCTM(bmContext, flipHorizontal);
-    }
-
-    CGContextDrawImage(bmContext,
-                       CGRectMake((rotatedRect.size.width - width)/2.0f,
-                                  (rotatedRect.size.height - height)/2.0f,
-                                  width,
-                                  height),
-                       imgRef);
-
-    CGImageRef rotatedImage = CGBitmapContextCreateImage(bmContext);
-    CFRelease(bmContext);
-
-    return rotatedImage;
-}
-
-- (CGColorSpaceRef)copyColorSpaceWithColorPrimaries:(int)colorPrimaries
-{
-    const CGFloat whitePoint[] = {0.95047, 1.0, 1.08883};
-    const CGFloat blackPoint[] = {0, 0, 0};
-
-    // See https://developer.apple.com/library/content/technotes/tn2257/_index.html
-    const CGFloat gamma[] = {1.961, 1.961, 1.961};
-
-    // RGB/XYZ Matrices (D65 white point)
-    switch (colorPrimaries) {
-        case HB_COLR_PRI_EBUTECH:
-        {
-            // Rec. 601, 625 line
-            const CGFloat matrix[] = {0.4305538, 0.2220043, 0.0201822,
-                                      0.3415498, 0.7066548, 0.1295534,
-                                      0.1783523, 0.0713409, 0.9393222};
-            return CGColorSpaceCreateCalibratedRGB(whitePoint, blackPoint, gamma, matrix);
-        }
-        case HB_COLR_PRI_SMPTEC:
-        {
-            // Rec. 601, 525 line
-            const CGFloat matrix[] = {0.3935209, 0.2123764, 0.0187391,
-                                      0.3652581, 0.7010599, 0.1119339,
-                                      0.1916769, 0.0865638, 0.9583847};
-            return CGColorSpaceCreateCalibratedRGB(whitePoint, blackPoint, gamma, matrix);
-        }
-        case HB_COLR_PRI_BT2020:
-        {
-            // Rec. 2020
-            const CGFloat matrix[] = {0.6369580, 0.2627002, 0.0000000,
-                                      0.1446169, 0.6779981, 0.0280727,
-                                      0.1688810, 0.0593017, 1.0609851};
-            return CGColorSpaceCreateCalibratedRGB(whitePoint, blackPoint, gamma, matrix);
-        }
-        case HB_COLR_PRI_BT709:
-        default:
-        {
-            // Rec. 709
-            const CGFloat matrix[] = {0.4124564, 0.2126729, 0.0193339,
-                                      0.3575761, 0.7151522, 0.1191920,
-                                      0.1804375, 0.0721750, 0.9503041};
-            return CGColorSpaceCreateCalibratedRGB(whitePoint, blackPoint, gamma, matrix);
-        }
-    }
-}
-
 - (CGImageRef)copyImageAtIndex:(NSUInteger)index
                       forTitle:(HBTitle *)title
                   pictureFrame:(HBPicture *)frame
-                   deinterlace:(BOOL)deinterlace
-                        rotate:(int)angle
-                       flipped:(BOOL)flipped CF_RETURNS_RETAINED
+                   deinterlace:(BOOL)deinterlace CF_RETURNS_RETAINED
 {
     CGImageRef img = NULL;
 
@@ -437,25 +355,8 @@ typedef void (^HBCoreCleanupHandler)();
         // Create an CGImageRef and copy the libhb image into it.
         // The image data returned by hb_get_preview2 is 4 bytes per pixel, BGRA format.
         // Alpha is ignored.
-        CGBitmapInfo bitmapInfo = kCGBitmapByteOrderDefault | kCGImageAlphaNone;
-        CFMutableDataRef imgData = CFDataCreateMutable(kCFAllocatorDefault, 3 * image->width * image->height);
-        CGDataProviderRef provider = CGDataProviderCreateWithCFData(imgData);
-        CGColorSpaceRef colorSpace = [self copyColorSpaceWithColorPrimaries:title.hb_title->color_prim];
-
-        img = CGImageCreate(image->width,
-                            image->height,
-                            8,
-                            24,
-                            image->width * 3,
-                            colorSpace,
-                            bitmapInfo,
-                            provider,
-                            NULL,
-                            NO,
-                            kCGRenderingIntentDefault);
-        CGColorSpaceRelease(colorSpace);
-        CGDataProviderRelease(provider);
-        CFRelease(imgData);
+        CFMutableDataRef imgData = CFDataCreateMutable(kCFAllocatorDefault, 0);
+        CFDataSetLength(imgData, 3 * image->width * image->height);
 
         UInt8 *src_line = image->data;
         UInt8 *dst = CFDataGetMutableBytePtr(imgData);
@@ -472,12 +373,35 @@ typedef void (^HBCoreCleanupHandler)();
             src_line += image->plane[0].stride;
         }
 
+        CGDataProviderRef provider = CGDataProviderCreateWithCFData(imgData);
+
+        CGBitmapInfo bitmapInfo = kCGBitmapByteOrderDefault | kCGImageAlphaNone;
+        CGColorSpaceRef colorSpace = copyColorSpace(title.hb_title->color_prim,
+                                                    title.hb_title->color_transfer,
+                                                    title.hb_title->color_matrix);
+
+        img = CGImageCreate(image->width,
+                            image->height,
+                            8,
+                            24,
+                            image->width * 3,
+                            colorSpace,
+                            bitmapInfo,
+                            provider,
+                            NULL,
+                            NO,
+                            kCGRenderingIntentDefault);
+
+        CGColorSpaceRelease(colorSpace);
+        CGDataProviderRelease(provider);
+        CFRelease(imgData);
+
         hb_image_close(&image);
     }
 
-    if (angle || flipped)
+    if (img && (frame.rotate || frame.flip))
     {
-        CGImageRef rotatedImg = [self CGImageRotatedByAngle:img angle:angle flipped:flipped];
+        CGImageRef rotatedImg = CGImageRotated(img, frame.rotate, frame.flip);
         CGImageRelease(img);
         return rotatedImg;
     }
@@ -494,7 +418,7 @@ typedef void (^HBCoreCleanupHandler)();
 
 #pragma mark - Encodes
 
-- (void)encodeJob:(HBJob *)job progressHandler:(HBCoreProgressHandler)progressHandler completionHandler:(HBCoreCompletionHandler)completionHandler;
+- (void)encodeJob:(HBJob *)job progressHandler:(HBCoreProgressHandler)progressHandler completionHandler:(HBCoreCompletionHandler)completionHandler
 {
     NSAssert(self.state == HBStateIdle, @"[HBCore encodeJob:] called while another scan or encode already in progress");
     NSAssert(job, @"[HBCore encodeJob:] called with nil job");
@@ -511,14 +435,14 @@ typedef void (^HBCoreCleanupHandler)();
 
     // Add the job to libhb
     hb_job_t *hb_job = job.hb_job;
-    hb_job_set_file(hb_job, job.completeOutputURL.path.fileSystemRepresentation);
+    hb_job_set_file(hb_job, job.completeOutputURL.fileSystemRepresentation);
     hb_add(_hb_handle, hb_job);
 
     // Free the job
     hb_job_close(&hb_job);
 
     [self preventAutoSleep];
-
+    [self startProgressReporting:job.completeOutputURL];
     hb_start(_hb_handle);
 
     // Start the timer to handle libhb state changes
@@ -535,7 +459,9 @@ typedef void (^HBCoreCleanupHandler)();
 
 - (HBCoreResult)workDone
 {
-    // HB_STATE_WORKDONE happpens as a result of libhb finishing all its jobs
+    [self stopProgressReporting];
+
+    // HB_STATE_WORKDONE happens as a result of libhb finishing all its jobs
     // or someone calling hb_stop. In the latter case, hb_stop does not clear
     // out the remaining passes/jobs in the queue. We'll do that here.
     hb_job_t *job;
@@ -545,14 +471,14 @@ typedef void (^HBCoreCleanupHandler)();
     }
 
     HBCoreResult result = HBCoreResultDone;
-    switch (_hb_state->param.workdone.error)
+    switch (_hb_state->param.working.error)
     {
         case HB_ERROR_NONE:
             result = HBCoreResultDone;
             [HBUtilities writeToActivityLog:"%s work done", self.name.UTF8String];
             break;
         case HB_ERROR_CANCELED:
-            result = HBCoreResultCancelled;
+            result = HBCoreResultCanceled;
             [HBUtilities writeToActivityLog:"%s work canceled", self.name.UTF8String];
             break;
         default:
@@ -581,6 +507,31 @@ typedef void (^HBCoreCleanupHandler)();
     hb_resume(_hb_handle);
     self.state = HBStateWorking;
     [self preventAutoSleep];
+}
+
+#pragma mark - Progress
+
+- (void)startProgressReporting:(NSURL *)fileURL
+{
+    if (fileURL)
+    {
+        NSDictionary *userInfo = @{NSProgressFileURLKey : fileURL};
+
+        self.progress = [[NSProgress alloc] initWithParent:nil userInfo:userInfo];
+        self.progress.totalUnitCount = 100;
+        self.progress.kind = NSProgressKindFile;
+        self.progress.pausable = NO;
+        self.progress.cancellable = NO;
+
+        [self.progress publish];
+    }
+}
+
+- (void)stopProgressReporting
+{
+    self.progress.completedUnitCount = 100;
+    [self.progress unpublish];
+    self.progress = nil;
 }
 
 #pragma mark - State updates
@@ -615,7 +566,6 @@ typedef void (^HBCoreCleanupHandler)();
     if (self.updateTimer)
     {
         dispatch_source_cancel(self.updateTimer);
-        dispatch_release(self.updateTimer);
         self.updateTimer = NULL;
     }
 }
@@ -636,7 +586,10 @@ typedef void (^HBCoreCleanupHandler)();
     }
 
     // Update HBCore state to reflect the current state of libhb
-    self.state = _hb_state->state;
+    if (_state != _hb_state->state)
+    {
+        self.state = _hb_state->state;
+    }
 
     // Call the handler for the current state
     if (_hb_state->state == HB_STATE_WORKDONE || _hb_state->state == HB_STATE_SCANDONE)
@@ -672,6 +625,12 @@ typedef void (^HBCoreCleanupHandler)();
         NSString *info = [self.stateFormatter stateToString:state];
 
         self.progressHandler(self.state, progress, info);
+
+        if (state.state != HB_STATE_SEARCHING &&
+            self.progress.completedUnitCount < progress.percent * 100)
+        {
+            self.progress.completedUnitCount = progress.percent * 100;
+        }
     }
 }
 

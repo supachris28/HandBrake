@@ -1,14 +1,14 @@
 /* rendersub.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "hb.h"
-#include "hbffmpeg.h"
+#include "handbrake/handbrake.h"
+#include "handbrake/hbffmpeg.h"
 #include <ass/ass.h>
 
 #define ABS(a) ((a) > 0 ? (a) : (-(a)))
@@ -22,7 +22,7 @@ struct hb_filter_private_s
     int                 sws_width;
     int                 sws_height;
 
-    // VOBSUB
+    // VOBSUB && PGSSUB
     hb_list_t         * sub_list; // List of active subs
 
     // SSA
@@ -34,6 +34,9 @@ struct hb_filter_private_s
     // SRT
     int                 line;
     hb_buffer_t       * current_sub;
+
+    hb_filter_init_t    input;
+    hb_filter_init_t    output;
 };
 
 // VOBSUB
@@ -101,6 +104,8 @@ hb_filter_object_t hb_filter_render_sub =
     .close         = hb_rendersub_close,
 };
 
+// blends src YUVA420P buffer into dst
+// dst is currently YUV420P, but in future will be other formats as well
 static void blend( hb_buffer_t *dst, hb_buffer_t *src, int left, int top )
 {
     int xx, yy;
@@ -183,11 +188,112 @@ static void blend( hb_buffer_t *dst, hb_buffer_t *src, int left, int top )
     }
 }
 
-// Assumes that the input buffer has the same dimensions
-// as the original title diminsions
+static void blend8on1x( hb_buffer_t *dst, hb_buffer_t *src, int left, int top, int shift )
+{
+    int xx, yy;
+    int ww, hh;
+    int x0, y0;
+    int max;
+
+    uint8_t *y_in;
+    uint8_t *u_in;
+    uint8_t *v_in;
+    uint8_t *a_in;
+
+    uint16_t *y_out;
+    uint16_t *u_out;
+    uint16_t *v_out;
+    uint16_t alpha;
+
+    x0 = y0 = 0;
+    if( left < 0 )
+    {
+        x0 = -left;
+    }
+    if( top < 0 )
+    {
+        y0 = -top;
+    }
+
+    ww = src->f.width;
+    if( src->f.width - x0 > dst->f.width - left )
+    {
+        ww = dst->f.width - left + x0;
+    }
+    hh = src->f.height;
+    if( src->f.height - y0 > dst->f.height - top )
+    {
+        hh = dst->f.height - top + y0;
+    }
+
+    max = (256 << shift) -1;
+
+    // Blend luma
+    for( yy = y0; yy < hh; yy++ )
+    {
+        y_in   = src->plane[0].data + yy * src->plane[0].stride;
+        y_out   = (uint16_t*)(dst->plane[0].data + ( yy + top ) * dst->plane[0].stride);
+        a_in = src->plane[3].data + yy * src->plane[3].stride;
+        for( xx = x0; xx < ww; xx++ )
+        {
+            alpha = a_in[xx] << shift;
+            /*
+             * Merge the luminance and alpha with the picture
+             */
+            y_out[left + xx] =
+                ( (uint32_t)y_out[left + xx] * ( max - alpha ) +
+                     ((uint32_t)y_in[xx] << shift) * alpha ) / max;
+        }
+    }
+
+    // Blend U & V
+    int hshift = 0;
+    int wshift = 0;
+    if( dst->plane[1].height < dst->plane[0].height )
+        hshift = 1;
+    if( dst->plane[1].width < dst->plane[0].width )
+        wshift = 1;
+
+    for( yy = y0 >> hshift; yy < hh >> hshift; yy++ )
+    {
+        u_in = src->plane[1].data + yy * src->plane[1].stride;
+        u_out = (uint16_t*)(dst->plane[1].data + ( yy + ( top >> hshift ) ) * dst->plane[1].stride);
+        v_in = src->plane[2].data + yy * src->plane[2].stride;
+        v_out = (uint16_t*)(dst->plane[2].data + ( yy + ( top >> hshift ) ) * dst->plane[2].stride);
+        a_in = src->plane[3].data + ( yy << hshift ) * src->plane[3].stride;
+
+        for( xx = x0 >> wshift; xx < ww >> wshift; xx++ )
+        {
+            alpha = a_in[xx << wshift] << shift;
+
+            // Blend averge U and alpha
+            u_out[(left >> wshift) + xx] =
+                ( (uint32_t)u_out[(left >> wshift) + xx] * ( max - alpha ) +
+                  ((uint32_t)u_in[xx] << shift) * alpha ) / max;
+
+            // Blend V and alpha
+            v_out[(left >> wshift) + xx] =
+                ( (uint32_t)v_out[(left >> wshift) + xx] * ( max - alpha ) +
+                  ((uint32_t)v_in[xx] << shift) * alpha ) / max;
+        }
+    }
+}
+
+// Assumes that the input destination buffer has the same dimensions
+// as the original title dimensions
 static void ApplySub( hb_filter_private_t * pv, hb_buffer_t * buf, hb_buffer_t * sub )
 {
-    blend( buf, sub, sub->f.x, sub->f.y );
+    switch (pv->output.pix_fmt) {
+        case AV_PIX_FMT_YUV420P10:
+            blend8on1x(buf, sub, sub->f.x, sub->f.y, 2);
+            break;
+        case AV_PIX_FMT_YUV420P12:
+            blend8on1x(buf, sub, sub->f.x, sub->f.y, 4);
+            break;
+        default:
+            blend(buf, sub, sub->f.x, sub->f.y);
+            break;
+    }
 }
 
 static hb_buffer_t * ScaleSubtitle(hb_filter_private_t *pv,
@@ -224,7 +330,11 @@ static hb_buffer_t * ScaleSubtitle(hb_filter_private_t *pv,
 
         width       = sub->f.width  * xfactor;
         height      = sub->f.height * yfactor;
+        // Note that subtitle frame buffer is YUVA420P, not YUV420P, it has alpha
         scaled      = hb_frame_buffer_init(AV_PIX_FMT_YUVA420P, width, height);
+        if (scaled == NULL)
+            return NULL;
+
         scaled->f.x = sub->f.x * xfactor;
         scaled->f.y = sub->f.y * yfactor;
 
@@ -328,12 +438,14 @@ static hb_buffer_t * ScaleSubtitle(hb_filter_private_t *pv,
 }
 
 // Assumes that the input buffer has the same dimensions
-// as the original title diminsions
+// as the original title dimensions
 static void ApplyVOBSubs( hb_filter_private_t * pv, hb_buffer_t * buf )
 {
     int ii;
     hb_buffer_t *sub, *next;
 
+    // Note that VOBSUBs can overlap in time.
+    // I.e. more than one may be rendered to the screen at once.
     for( ii = 0; ii < hb_list_count(pv->sub_list); )
     {
         sub = hb_list_item( pv->sub_list, ii );
@@ -441,6 +553,7 @@ static uint8_t ssaAlpha( ASS_Image *frame, int x, int y )
     return (uint8_t)alpha;
 }
 
+// Returns a subtitle rendered to a YUVA420P frame
 static hb_buffer_t * RenderSSAFrame( hb_filter_private_t * pv, ASS_Image * frame )
 {
     hb_buffer_t *sub;
@@ -456,8 +569,9 @@ static hb_buffer_t * RenderSSAFrame( hb_filter_private_t * pv, ASS_Image * frame
     unsigned frameV = (yuv >> 8 ) & 0xff;
     unsigned frameU = (yuv >> 0 ) & 0xff;
 
-    sub = hb_frame_buffer_init( AV_PIX_FMT_YUVA420P, frame->w, frame->h );
-    if( sub == NULL )
+    // Note that subtitle frame buffer is YUVA420P, not YUV420P, it has alpha
+    sub = hb_frame_buffer_init(AV_PIX_FMT_YUVA420P, frame->w, frame->h);
+    if (sub == NULL)
         return NULL;
 
     uint8_t *y_out, *u_out, *v_out, *a_out;
@@ -564,7 +678,7 @@ static int ssa_post_init( hb_filter_object_t * filter, hb_job_t * job )
     }
 
     ass_set_use_margins( pv->renderer, 0 );
-    ass_set_hinting( pv->renderer, ASS_HINTING_LIGHT ); // VLC 1.0.4 uses this
+    ass_set_hinting( pv->renderer, ASS_HINTING_NONE );
     ass_set_font_scale( pv->renderer, 1.0 );
     ass_set_line_spacing( pv->renderer, 1.0 );
 
@@ -589,7 +703,7 @@ static int ssa_post_init( hb_filter_object_t * filter, hb_job_t * job )
     ass_set_frame_size( pv->renderer, width, height);
 
     double par = (double)job->par.num / job->par.den;
-    ass_set_aspect_ratio( pv->renderer, 1, par );
+    ass_set_pixel_aspect( pv->renderer, par );
 
     return 0;
 }
@@ -674,8 +788,8 @@ static int cc608sub_post_init( hb_filter_object_t * filter, hb_job_t * job )
     int height = job->title->geometry.height - job->crop[0] - job->crop[1];
     int width = job->title->geometry.width - job->crop[2] - job->crop[3];
     int safe_height = 0.8 * job->title->geometry.height;
-    // Use fixed widht font for CC
-    hb_subtitle_add_ssa_header(filter->subtitle, "Courier New",
+    // Use fixed width font for CC
+    hb_subtitle_add_ssa_header(filter->subtitle, HB_FONT_MONO,
                                .08 * safe_height, width, height);
     return ssa_post_init(filter, job);
 }
@@ -686,7 +800,7 @@ static int textsub_post_init( hb_filter_object_t * filter, hb_job_t * job )
     // to have the header rewritten with the correct dimensions.
     int height = job->title->geometry.height - job->crop[0] - job->crop[1];
     int width = job->title->geometry.width - job->crop[2] - job->crop[3];
-    hb_subtitle_add_ssa_header(filter->subtitle, "Arial",
+    hb_subtitle_add_ssa_header(filter->subtitle, HB_FONT_SANS,
                                .066 * job->title->geometry.height,
                                width, height);
     return ssa_post_init(filter, job);
@@ -940,6 +1054,8 @@ static int hb_rendersub_init( hb_filter_object_t * filter,
     hb_subtitle_t *subtitle;
     int ii;
 
+    pv->input = *init;
+
     // Find the subtitle we need
     for( ii = 0; ii < hb_list_count(init->job->list_subtitle); ii++ )
     {
@@ -957,6 +1073,8 @@ static int hb_rendersub_init( hb_filter_object_t * filter,
         hb_log("rendersub: no subtitle marked for burn");
         return 1;
     }
+    pv->output = *init;
+
     return 0;
 }
 
@@ -974,37 +1092,38 @@ static int hb_rendersub_post_init( hb_filter_object_t * filter, hb_job_t *job )
         case VOBSUB:
         {
             return vobsub_post_init( filter, job );
-        } break;
+        }
 
         case SSASUB:
         {
             return ssa_post_init( filter, job );
-        } break;
+        }
 
-        case SRTSUB:
+        case IMPORTSRT:
+        case IMPORTSSA:
         case UTF8SUB:
         case TX3GSUB:
         {
             return textsub_post_init( filter, job );
-        } break;
+        }
 
         case CC608SUB:
         {
             return cc608sub_post_init( filter, job );
-        } break;
+        }
 
+        case DVBSUB:
         case PGSSUB:
         {
             return pgssub_post_init( filter, job );
-        } break;
+        }
 
         default:
         {
             hb_log("rendersub: unsupported subtitle format %d", pv->type );
             return 1;
-        } break;
+        }
     }
-    return 0;
 }
 
 static int hb_rendersub_work( hb_filter_object_t * filter,
@@ -1017,31 +1136,33 @@ static int hb_rendersub_work( hb_filter_object_t * filter,
         case VOBSUB:
         {
             return vobsub_work( filter, buf_in, buf_out );
-        } break;
+        }
 
         case SSASUB:
         {
             return ssa_work( filter, buf_in, buf_out );
-        } break;
+        }
 
-        case SRTSUB:
+        case IMPORTSRT:
+        case IMPORTSSA:
         case CC608SUB:
         case UTF8SUB:
         case TX3GSUB:
         {
             return textsub_work( filter, buf_in, buf_out );
-        } break;
+        }
 
+        case DVBSUB:
         case PGSSUB:
         {
             return pgssub_work( filter, buf_in, buf_out );
-        } break;
+        }
 
         default:
         {
             hb_error("rendersub: unsupported subtitle format %d", pv->type );
             return 1;
-        } break;
+        }
     }
 }
 
@@ -1065,7 +1186,8 @@ static void hb_rendersub_close( hb_filter_object_t * filter )
             ssa_close( filter );
         } break;
 
-        case SRTSUB:
+        case IMPORTSRT:
+        case IMPORTSSA:
         case CC608SUB:
         case UTF8SUB:
         case TX3GSUB:
@@ -1073,6 +1195,7 @@ static void hb_rendersub_close( hb_filter_object_t * filter )
             textsub_close( filter );
         } break;
 
+        case DVBSUB:
         case PGSSUB:
         {
             pgssub_close( filter );

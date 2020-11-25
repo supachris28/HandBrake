@@ -6,7 +6,7 @@
 
 #import "HBAudioTrackPreset.h"
 #import "HBCodingUtilities.h"
-#include "hb.h"
+#include "handbrake/handbrake.h"
 
 #define DEFAULT_SAMPLERATE 48000
 
@@ -30,7 +30,7 @@
         _container = HB_MUX_MKV;
         _sampleRate = 0;
         _bitRate = 160;
-        _mixdown = HB_AMIXDOWN_DOLBYPLII;
+        _mixdown = HB_AMIXDOWN_STEREO;
     }
     return self;
 }
@@ -198,11 +198,16 @@
     }
 }
 
+- (BOOL)isAutoPassthruEnabledWithNoFallback
+{
+    return (self.encoder == HB_ACODEC_AUTO_PASS && self.fallbackEncoder == HB_ACODEC_NONE);
+}
+
 - (BOOL)mixdownEnabled
 {
     BOOL retval = YES;
 
-    if (self.mixdown == HB_AMIXDOWN_NONE)
+    if (self.mixdown == HB_AMIXDOWN_NONE || self.isAutoPassthruEnabledWithNoFallback)
     {
         // "None" mixdown (passthru)
         retval = NO;
@@ -216,7 +221,7 @@
     BOOL retval = YES;
 
     int myCodecDefaultBitrate = hb_audio_bitrate_get_default(self.selectedEncoder, 0, 0);
-    if (myCodecDefaultBitrate < 0)
+    if (myCodecDefaultBitrate < 0 || self.isAutoPassthruEnabledWithNoFallback)
     {
         retval = NO;
     }
@@ -227,7 +232,7 @@
 {
     BOOL retval = YES;
 
-    if (self.selectedEncoder & HB_ACODEC_PASS_FLAG)
+    if (self.selectedEncoder & HB_ACODEC_PASS_FLAG || self.isAutoPassthruEnabledWithNoFallback)
     {
         retval = NO;
     }
@@ -283,7 +288,10 @@
          audio_encoder != NULL;
          audio_encoder  = hb_audio_encoder_get_next(audio_encoder))
     {
-        [encoders addObject:@(audio_encoder->name)];
+        if (audio_encoder->codec != HB_ACODEC_NONE)
+        {
+            [encoders addObject:@(audio_encoder->name)];
+        }
     }
     return encoders;
 }
@@ -432,20 +440,23 @@
 {
     self = [super init];
 
-    decodeInt(_encoder);
-    decodeInt(_fallbackEncoder);
-    decodeInt(_mixdown);
-    decodeInt(_sampleRate);
-    decodeInt(_bitRate);
+    decodeInt(_encoder); if (_encoder < 0) { goto fail; }
+    decodeInt(_fallbackEncoder); if (_fallbackEncoder < 0) { goto fail; }
+    decodeInt(_mixdown); if (_mixdown < 0) { goto fail; }
+    decodeInt(_sampleRate); if (_sampleRate < 0) { goto fail; }
+    decodeInt(_bitRate); if (_bitRate < -1) { goto fail; }
 
     decodeDouble(_gain);
     decodeDouble(_drc);
 
-    decodeInt(_container);
+    decodeInt(_container); if (_container != HB_MUX_MP4 && _container != HB_MUX_MKV && _container != HB_MUX_WEBM) { goto fail; }
 
     [self validateFallbackEncoder];
 
     return self;
+
+fail:
+    return nil;
 }
 
 @end

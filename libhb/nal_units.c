@@ -1,6 +1,6 @@
 /* nal_units.c
  *
- * Copyright (c) 2003-2017 HandBrake Team
+ * Copyright (c) 2003-2020 HandBrake Team
  * This file is part of the HandBrake source code.
  * Homepage: <http://handbrake.fr/>.
  * It may be used under the terms of the GNU General Public License v2.
@@ -10,8 +10,8 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "common.h"
-#include "nal_units.h"
+#include "handbrake/common.h"
+#include "handbrake/nal_units.h"
 
 static const uint8_t hb_annexb_startcode[] = { 0x00, 0x00, 0x00, 0x01, };
 

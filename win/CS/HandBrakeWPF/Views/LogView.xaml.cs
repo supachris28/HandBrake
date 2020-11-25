@@ -14,6 +14,10 @@ namespace HandBrakeWPF.Views
     using System.Windows;
     using System.Windows.Controls;
 
+    using Caliburn.Micro;
+
+    using HandBrakeWPF.Services.Logging.EventArgs;
+    using HandBrakeWPF.Utilities;
     using HandBrakeWPF.ViewModels;
 
     /// <summary>
@@ -21,6 +25,8 @@ namespace HandBrakeWPF.Views
     /// </summary>
     public partial class LogView : Window
     {
+        private DelayedActionProcessor delayProcessor = new DelayedActionProcessor();
+        
         /// <summary>
         /// Initializes a new instance of the <see cref="LogView"/> class.
         /// </summary>
@@ -58,7 +64,7 @@ namespace HandBrakeWPF.Views
         /// <param name="e">
         /// The e.
         /// </param>
-        private void Vm_LogMessageReceived(object sender, HandBrake.ApplicationServices.Services.Logging.EventArgs.LogEventArgs e)
+        private void Vm_LogMessageReceived(object sender, LogEventArgs e)
         {
             try
             {
@@ -86,7 +92,7 @@ namespace HandBrakeWPF.Views
 
                     if (this.AutoScroll.IsChecked)
                     {
-                        this.logText.ScrollToEnd();
+                        delayProcessor.PerformTask(() => Execute.OnUIThreadAsync(() => this.logText.ScrollToEnd()), 100);
                     }
                 }
             }

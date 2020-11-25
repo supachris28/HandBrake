@@ -1,18 +1,18 @@
 /* compat.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "compat.h"
+#include "handbrake/compat.h"
 
 #ifdef HB_NEED_STRTOK_R
 #include <string.h>
 
-char *strtok_r(char *s, const char *delim, char **save_ptr) 
+char *strtok_r(char *s, const char *delim, char **save_ptr)
 {
     char *token;
 
@@ -46,6 +46,7 @@ char *strtok_r(char *s, const char *delim, char **save_ptr)
 #include <sys/types.h>
 #include <errno.h>
 #include <string.h>
+#include <stdio.h>
 
 #define ERRSTR_LEN 20
 

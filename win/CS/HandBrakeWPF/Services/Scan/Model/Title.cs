@@ -11,9 +11,10 @@ namespace HandBrakeWPF.Services.Scan.Model
 {
     using System;
     using System.Collections.Generic;
+    using System.IO;
     using System.Linq;
 
-    using HandBrake.ApplicationServices.Interop.Model;
+    using HandBrake.Interop.Interop.Model;
 
     /// <summary>
     /// An object that represents a single Title of a DVD
@@ -28,6 +29,7 @@ namespace HandBrakeWPF.Services.Scan.Model
             this.AudioTracks = new List<Audio>();
             this.Chapters = new List<Chapter>();
             this.Subtitles = new List<Subtitle>();
+            this.Metadata = new Metadata();
         }
 
         #region Properties
@@ -46,6 +48,8 @@ namespace HandBrakeWPF.Services.Scan.Model
         /// Gets or sets a Collection of subtitles associated with this Title
         /// </summary>
         public List<Subtitle> Subtitles { get; set; }
+
+        public Metadata Metadata { get; set; }
 
         /// <summary>
         /// Gets or sets The track number of this Title
@@ -123,6 +127,65 @@ namespace HandBrakeWPF.Services.Scan.Model
         /// </summary>
         public string SourceName { get; set; }
 
+        public string DisplaySourceName
+        {
+            get
+            {
+                if (!string.IsNullOrEmpty(this.SourceName))
+                {
+                    return Path.GetFileNameWithoutExtension(this.SourceName);
+                }
+
+                return null;
+            }
+        }
+
+        public string SourceDisplayName
+        {
+            get
+            {
+                switch (this.Type)
+                {
+                    case 0: // HB_DVD_TYPE
+                    case 1: // HB_BD_TYPE
+                    default:
+                        return string.Empty;
+                    case 2: // HB_STREAM_TYPE
+                    case 3: // HB_FF_STREAM_TYPE
+                        return Path.GetFileNameWithoutExtension(this.SourceName);
+                }
+            }
+        }
+
+        public string ItemDisplayText
+        {
+            get
+            {
+                return string.Format(
+                    "{0} {1} ({2:00}:{3:00}:{4:00}) {5}",
+                    this.TitleNumber,
+                    this.Playlist,
+                    this.Duration.Hours,
+                    this.Duration.Minutes,
+                    this.Duration.Seconds,
+                    this.SourceDisplayName);
+            }
+        }
+
+        public string ItemDisplayTextClosed
+        {
+            get
+            {
+                return string.Format(
+                    "{0} {1} ({2:00}:{3:00}:{4:00})",
+                    this.TitleNumber,
+                    this.Playlist,
+                    this.Duration.Hours,
+                    this.Duration.Minutes,
+                    this.Duration.Seconds);
+            }
+        }
+
         #endregion
 
         /// <summary>
@@ -131,7 +194,7 @@ namespace HandBrakeWPF.Services.Scan.Model
         /// <param name="startPoint">The Start Point (Chapters)</param>
         /// <param name="endPoint">The End Point (Chapters)</param>
         /// <returns>A Timespan</returns>
-        public TimeSpan CalculateDuration(int startPoint, int endPoint)
+        public TimeSpan CalculateDuration(long startPoint, long endPoint)
         {
             IEnumerable<Chapter> chapers =
                 this.Chapters.Where(c => c.ChapterNumber >= startPoint && c.ChapterNumber <= endPoint);
@@ -153,7 +216,7 @@ namespace HandBrakeWPF.Services.Scan.Model
                 this.Playlist = string.Format(" {0}", this.Playlist);
             }
 
-            return string.Format("{0}{1} ({2:00}:{3:00}:{4:00})", this.TitleNumber, this.Playlist, this.Duration.Hours, this.Duration.Minutes, this.Duration.Seconds);
+            return string.Format("{0} {1} ({2:00}:{3:00}:{4:00})", this.TitleNumber, this.Playlist, this.Duration.Hours, this.Duration.Minutes, this.Duration.Seconds);
         }
     }
 }

@@ -9,6 +9,8 @@
 @class HBPresetsManager;
 @class HBPreset;
 
+NS_ASSUME_NONNULL_BEGIN
+
 @protocol HBPresetsViewControllerDelegate <NSObject>
 
 - (void)selectionDidChange;
@@ -22,17 +24,18 @@
 
 @property (nonatomic, readwrite, assign) id<HBPresetsViewControllerDelegate> delegate;
 
+- (IBAction)setDefault:(id)sender;
+- (IBAction)deletePreset:(id)sender;
+
 - (IBAction)exportPreset:(id)sender;
 - (IBAction)importPreset:(id)sender;
 
-- (void)deselect;
-- (void)setSelection:(HBPreset *)preset;
+- (IBAction)insertCategory:(id)sender;
 
-- (IBAction)insertFolder:(id)sender;
-
-@property (nonatomic, readonly, weak) HBPreset *selectedPreset;
-@property (nonatomic, readonly) NSUInteger indexOfSelectedItem;
+@property (nonatomic, readwrite) HBPreset *selectedPreset;
 
 @property (nonatomic, readwrite, getter=isEnabled) BOOL enabled;
 
 @end
+
+NS_ASSUME_NONNULL_END

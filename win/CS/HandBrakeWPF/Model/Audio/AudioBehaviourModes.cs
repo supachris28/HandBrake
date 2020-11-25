@@ -9,24 +9,24 @@
 
 namespace HandBrakeWPF.Model.Audio
 {
-    using System.ComponentModel.DataAnnotations;
+    using HandBrake.Interop.Attributes;
 
-    using HandBrake.ApplicationServices.Attributes;
+    using HandBrakeWPF.Properties;
 
     /// <summary>
     /// The audio behaviours.
     /// </summary>
     public enum AudioBehaviourModes
     {
-        [Display(Name = "No Audio")]
+        [DisplayName(typeof(Resources), "AudioBehaviourModes_None")]
         [ShortName("none")]
         None = 0,
 
-        [Display(Name = "First Matching Selected Language")]
+        [DisplayName(typeof(Resources), "AudioBehaviourModes_FirstMatch")]
         [ShortName("first")]
         FirstMatch,
 
-        [Display(Name = "All Matching Selected Languages")]
+        [DisplayName(typeof(Resources), "AudioBehaviourModes_AllMatching")]
         [ShortName("all")]
         AllMatching,
     }

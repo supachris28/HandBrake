@@ -11,10 +11,9 @@ namespace HandBrakeWPF.Utilities
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.Management;
     using System.Windows.Forms;
-
-    using HandBrake.ApplicationServices.Interop.HbLib;
 
     using Microsoft.Win32;
 
@@ -23,6 +22,8 @@ namespace HandBrakeWPF.Utilities
     /// </summary>
     public class SystemInfo
     {
+        private static int cpuCoreCount = -1;
+
         /// <summary>
         /// Gets the total physical ram in a system
         /// </summary>
@@ -39,17 +40,36 @@ namespace HandBrakeWPF.Utilities
             }
         }
 
-        /// <summary>
-        /// Gets the number of CPU Cores
-        /// </summary>
-        /// <returns>Object</returns>
-        public static object GetCpuCount
+        public static object GetCpu
         {
             get
             {
                 RegistryKey regKey = Registry.LocalMachine;
                 regKey = regKey.OpenSubKey("HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0");
                 return regKey == null ? 0 : regKey.GetValue("ProcessorNameString");
+            }
+        }
+
+        public static int GetCpuCoreCount
+        {
+            get
+            {
+                if (cpuCoreCount != -1)
+                {
+                    return cpuCoreCount;
+                }
+
+                int coreCount = 0;
+                var cpuList = new System.Management.ManagementObjectSearcher("Select NumberOfCores from Win32_Processor").Get();
+
+                foreach (var item in cpuList)
+                {
+                    coreCount += int.Parse(item["NumberOfCores"].ToString());
+                }
+
+                cpuCoreCount = coreCount;
+
+                return cpuCoreCount;
             }
         }
 
@@ -74,7 +94,7 @@ namespace HandBrakeWPF.Utilities
                 try
                 {
                     ManagementObjectSearcher searcher =
-                        new ManagementObjectSearcher("select * from " + "Win32_VideoController");
+                        new ManagementObjectSearcher("select DriverVersion, Name from " + "Win32_VideoController");
 
                     foreach (ManagementObject share in searcher.Get())
                     {
@@ -109,6 +129,25 @@ namespace HandBrakeWPF.Utilities
 
                 return gpuInfo;
             }
+        }
+
+        public static bool IsWindows10()
+        {
+            var reg = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+
+            string productName = (string)reg.GetValue("ProductName");
+
+            if (productName.StartsWith("Windows 10"))
+            {
+                return true;
+            }
+
+            if (productName.StartsWith("Windows Server 2019"))
+            {
+                return true;
+            }
+
+            return false;
         }
     }
 }

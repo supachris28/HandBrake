@@ -1,14 +1,13 @@
 /* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
 /*
  * callbacks.h
- * Copyright (C) John Stebbins 2008-2017 <stebbins@stebbins>
+ * Copyright (C) John Stebbins 2008-2020 <stebbins@stebbins>
  *
  * callbacks.h is free software.
  *
  * You may redistribute it and/or modify it under the terms of the
- * GNU General Public License, as published by the Free Software
- * Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * GNU General Public License version 2, as published by the Free Software
+ * Foundation.
  *
  * callbacks.h is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -30,7 +29,7 @@
 #endif
 
 #include <gtk/gtk.h>
-#include "hb.h"
+#include "handbrake/handbrake.h"
 #include "values.h"
 #include "settings.h"
 
@@ -68,8 +67,6 @@ void ghb_do_scan( signal_user_data_t *ud, const gchar *filename,
     gint titlenum, gboolean force);
 void ghb_log(gchar *log, ...);
 gpointer ghb_check_update(signal_user_data_t *ud);
-void ghb_uninhibit_gsm(void);
-void ghb_inhibit_gsm(signal_user_data_t *ud);
 #if defined(_WIN32)
 void wm_drive_changed(MSG *msg, signal_user_data_t *ud);
 #endif
@@ -80,7 +77,6 @@ void ghb_update_pending(signal_user_data_t *ud);
 gboolean ghb_idle_scan(signal_user_data_t *ud);
 void ghb_add_all_titles(signal_user_data_t *ud);
 void ghb_update_title_info(signal_user_data_t *ud);
-void ghb_chapter_list_refresh_all(signal_user_data_t *ud);
 void ghb_load_settings(signal_user_data_t * ud);
 void ghb_load_post_settings(signal_user_data_t * ud);
 void ghb_set_current_title_settings(signal_user_data_t *ud);
@@ -89,6 +85,12 @@ void ghb_show_container_options(signal_user_data_t *ud);
 void ghb_scale_configure(signal_user_data_t *ud, char *name, double val,
                          double min, double max, double step, double page,
                          int digits, gboolean inverted);
+void ghb_update_summary_info(signal_user_data_t *ud);
+void ghb_set_title_settings(signal_user_data_t *ud, GhbValue *settings);
+void ghb_browse_uri(signal_user_data_t *ud, const gchar *uri);
+void ghb_break_pts_duration(gint64 ptsDuration,
+                            gint *hh, gint *mm, gdouble *ss);
+void ghb_break_duration(gint64 duration, gint *hh, gint *mm, gint *ss);
 
 #endif // _CALLBACKS_H_
 

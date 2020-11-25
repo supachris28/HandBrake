@@ -5,23 +5,19 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import <Foundation/Foundation.h>
-#import "HBTreeNode.h"
+#import <HandBrakeKit/HBTreeNode.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
-typedef NS_ENUM(NSUInteger, HBPresetFormat) {
-    HBPresetFormatPlist,
-    HBPresetFormatJson,
-};
 /**
  *  HBPreset
  *  Stores a preset dictionary.
  *
- *  An instance of HBPreset can be an actual preset or a folder.
+ *  An instance of HBPreset can be an actual preset or a category.
  */
 @interface HBPreset : HBTreeNode <NSCopying, NSMutableCopying>
 
-- (instancetype)initWithFolderName:(NSString *)title builtIn:(BOOL)builtIn;
+- (instancetype)initWithCategoryName:(NSString *)title builtIn:(BOOL)builtIn;
 - (instancetype)initWithName:(NSString *)title content:(NSDictionary *)content builtIn:(BOOL)builtIn;
 
 - (instancetype)initWithDictionary:(NSDictionary *)dict;
@@ -42,12 +38,11 @@ typedef NS_ENUM(NSUInteger, HBPresetFormat) {
  *
  *  @param url        The URL to which to write the preset.
  *  @param atomically A flag that specifies whether the output should be written atomically.
- *  @param format     the format of the file to write.
  *  @param removeRoot whether the root preset should be written or not.
  *
  *  @return YES if the location is written successfully, otherwise NO.
  */
-- (BOOL)writeToURL:(NSURL *)url atomically:(BOOL)atomically format:(HBPresetFormat)format removeRoot:(BOOL)removeRoot;
+- (BOOL)writeToURL:(NSURL *)url atomically:(BOOL)atomically removeRoot:(BOOL)removeRoot error:(NSError * __autoreleasing *)outError;
 
 /**
  *  The name of the preset.

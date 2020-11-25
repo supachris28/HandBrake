@@ -17,6 +17,11 @@ namespace HandBrakeWPF.ViewModels.Interfaces
     public interface IOptionsViewModel
     {
         /// <summary>
+        /// The currently selected Tab in the options pane.
+        /// </summary>
+        OptionsTab SelectedTab { get; }
+
+        /// <summary>
         /// The goto tab.
         /// </summary>
         /// <param name="tab">
@@ -28,5 +33,9 @@ namespace HandBrakeWPF.ViewModels.Interfaces
         /// Refresh certain UI controls that can be updated outside preferences.
         /// </summary>
         void UpdateSettings();
+
+        void Close();
+
+        void PerformUpdateCheck();
     }
 }

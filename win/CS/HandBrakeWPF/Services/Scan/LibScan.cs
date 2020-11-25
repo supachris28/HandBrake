@@ -14,82 +14,57 @@ namespace HandBrakeWPF.Services.Scan
     using System.Diagnostics;
     using System.Windows.Media.Imaging;
 
-    using HandBrake.ApplicationServices.Interop;
-    using HandBrake.ApplicationServices.Interop.HbLib;
-    using HandBrake.ApplicationServices.Interop.Interfaces;
-    using HandBrake.ApplicationServices.Interop.Json.Scan;
-    using HandBrake.ApplicationServices.Interop.Model;
-    using HandBrake.ApplicationServices.Interop.Model.Preview;
-    using HandBrake.ApplicationServices.Model;
-    using HandBrake.ApplicationServices.Services.Logging;
-    using HandBrake.ApplicationServices.Services.Logging.Interfaces;
-    using HandBrake.ApplicationServices.Services.Logging.Model;
+    using HandBrake.Interop.Interop;
+    using HandBrake.Interop.Interop.Interfaces;
+    using HandBrake.Interop.Interop.Json.Scan;
+    using HandBrake.Interop.Interop.Model;
+    using HandBrake.Interop.Interop.Model.Encoding;
+    using HandBrake.Interop.Interop.Model.Preview;
+    using HandBrake.Interop.Model;
 
-    using HandBrakeWPF.Properties;
+    using HandBrakeWPF.Instance;
     using HandBrakeWPF.Services.Encode.Model;
-    using HandBrakeWPF.Services.Encode.Model.Models;
+    using HandBrakeWPF.Services.Interfaces;
     using HandBrakeWPF.Services.Scan.EventArgs;
+    using HandBrakeWPF.Services.Scan.Factories;
     using HandBrakeWPF.Services.Scan.Interfaces;
     using HandBrakeWPF.Services.Scan.Model;
     using HandBrakeWPF.Utilities;
 
-    using Chapter = HandBrakeWPF.Services.Scan.Model.Chapter;
-    using ScanProgressEventArgs = HandBrake.ApplicationServices.Interop.EventArgs.ScanProgressEventArgs;
-    using Subtitle = HandBrakeWPF.Services.Scan.Model.Subtitle;
-    using Title = HandBrakeWPF.Services.Scan.Model.Title;
+    using ILog = Logging.Interfaces.ILog;
+    using LogService = Logging.LogService;
+    using ScanProgressEventArgs = HandBrake.Interop.Interop.EventArgs.ScanProgressEventArgs;
+    using Title = Model.Title;
 
     /// <summary>
     /// Scan a Source
     /// </summary>
-    public class LibScan : IScan
+    public class LibScan : IScan, IDisposable
     {
-        #region Private Variables
+        private readonly ILog log = null;
+        private readonly IUserSettingService userSettingService;
 
-        private readonly ILog log = LogService.GetLogger();
+        private TitleFactory titleFactory = new TitleFactory();
         private string currentSourceScanPath;
         private IHandBrakeInstance instance;
         private Action<bool, Source> postScanOperation;
         private bool isCancelled = false;
 
-        #endregion
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="LibScan"/> class. 
-        /// </summary>
-        public LibScan()
+        public LibScan(ILog logService, IUserSettingService userSettingService)
         {
+            this.log = logService;
+            this.userSettingService = userSettingService;
             this.IsScanning = false;
         }
 
-        #region Events
 
-        /// <summary>
-        /// Scan has Started
-        /// </summary>
         public event EventHandler ScanStarted;
 
-        /// <summary>
-        /// Scan has completed
-        /// </summary>
         public event ScanCompletedStatus ScanCompleted;
 
-        /// <summary>
-        /// Encode process has progressed
-        /// </summary>
         public event ScanProgessStatus ScanStatusChanged;
 
-        #endregion
-
-        #region Properties
-
-        /// <summary>
-        /// Gets a value indicating whether IsScanning.
-        /// </summary>
         public bool IsScanning { get; private set; }
-
-        #endregion
-
-        #region Public Methods
 
         /// <summary>
         /// Scan a Source Path.
@@ -104,10 +79,7 @@ namespace HandBrakeWPF.Services.Scan
         /// <param name="postAction">
         /// The post Action.
         /// </param>
-        /// <param name="configuraiton">
-        /// The configuraiton.
-        /// </param>
-        public void Scan(string sourcePath, int title, Action<bool, Source> postAction, HBConfiguration configuraiton)
+        public void Scan(string sourcePath, int title, Action<bool, Source> postAction)
         {
             // Try to cleanup any previous scan instances.
             if (this.instance != null)
@@ -122,16 +94,18 @@ namespace HandBrakeWPF.Services.Scan
                 }
             }
 
+            this.isCancelled = false;
+
             // Handle the post scan operation.
             this.postScanOperation = postAction;
 
             // Create a new HandBrake Instance.
-            this.instance = HandBrakeInstanceManager.GetScanInstance(configuraiton.Verbosity);
+            this.instance = HandBrakeInstanceManager.GetScanInstance(this.userSettingService.GetUserSetting<int>(UserSettingConstants.Verbosity));
             this.instance.ScanProgress += this.InstanceScanProgress;
             this.instance.ScanCompleted += this.InstanceScanCompleted;
 
             // Start the scan on a back
-            this.ScanSource(sourcePath, title, configuraiton.PreviewScanCount, configuraiton);
+            this.ScanSource(sourcePath, title, this.userSettingService.GetUserSetting<int>(UserSettingConstants.PreviewScanCount));
         }
 
         /// <summary>
@@ -141,15 +115,28 @@ namespace HandBrakeWPF.Services.Scan
         {
             try
             {
-                this.ServiceLogMessage("Stopping Scan.");
+                this.ServiceLogMessage("Manually Stopping Scan ...");
                 this.IsScanning = false;
-                this.instance.StopScan();
+              
+                var handBrakeInstance = this.instance;
+                if (handBrakeInstance != null)
+                {
+                    handBrakeInstance.StopScan();
+                    handBrakeInstance.ScanProgress -= this.InstanceScanProgress;
+                    handBrakeInstance.ScanCompleted -= this.InstanceScanCompleted;
+                    handBrakeInstance.Dispose();
+                    this.instance = null;
+                }
             }
             catch (Exception exc)
             {
-                this.isCancelled = false;
-                this.ScanCompleted?.Invoke(this, new ScanCompletedEventArgs(false, exc, Resources.ScanService_ScanStopFailed, null));
-                // Do Nothing.
+                this.ServiceLogMessage(exc.ToString());
+            }
+            finally
+            {
+                this.ScanCompleted?.Invoke(this, new ScanCompletedEventArgs(this.isCancelled, null, null, null));
+                this.instance = null;
+                this.ServiceLogMessage("Scan Stopped ...");
             }
         }
 
@@ -171,13 +158,10 @@ namespace HandBrakeWPF.Services.Scan
         /// <param name="preview">
         /// The preview.
         /// </param>
-        /// <param name="configuraiton">
-        /// The configuraiton.
-        /// </param>
         /// <returns>
         /// The <see cref="BitmapImage"/>.
         /// </returns>
-        public BitmapImage GetPreview(EncodeTask job, int preview, HBConfiguration configuraiton)
+        public BitmapImage GetPreview(EncodeTask job, int preview)
         {
             if (this.instance == null)
             {
@@ -202,19 +186,27 @@ namespace HandBrakeWPF.Services.Scan
                                                    PixelAspectY = job.PixelAspectY
                                                };
 
-                bitmapImage = BitmapUtilities.ConvertToBitmapImage(this.instance.GetPreview(settings, preview));
+                RawPreviewData bitmapData = this.instance.GetPreview(settings, preview, job.DeinterlaceFilter != DeinterlaceFilter.Off);
+                bitmapImage = BitmapUtilities.ConvertToBitmapImage(BitmapUtilities.ConvertByteArrayToBitmap(bitmapData));
             }
             catch (AccessViolationException e)
             {
-                Console.WriteLine(e);
+                Debug.WriteLine(e);
             }
 
             return bitmapImage;
         }
 
-        #endregion
-
-        #region Private Methods
+        /// <summary>
+        /// The service log message.
+        /// </summary>
+        /// <param name="message">
+        /// The message.
+        /// </param>
+        protected void ServiceLogMessage(string message)
+        {
+            this.log.LogMessage(string.Format("{0} # {1}{0}", Environment.NewLine, message));
+        }
 
         /// <summary>
         /// Start a scan for a given source path and title
@@ -228,10 +220,7 @@ namespace HandBrakeWPF.Services.Scan
         /// <param name="previewCount">
         /// The preview Count.
         /// </param>
-        /// <param name="configuraiton">
-        /// The configuraiton.
-        /// </param>
-        private void ScanSource(object sourcePath, int title, int previewCount, HBConfiguration configuraiton)
+        private void ScanSource(object sourcePath, int title, int previewCount)
         {
             try
             {
@@ -241,28 +230,22 @@ namespace HandBrakeWPF.Services.Scan
 
                 this.IsScanning = true;
 
-                TimeSpan minDuration = TimeSpan.FromSeconds(configuraiton.MinScanDuration);
+                TimeSpan minDuration = TimeSpan.FromSeconds(this.userSettingService.GetUserSetting<int>(UserSettingConstants.MinScanDuration));
 
-                HandBrakeUtils.SetDvdNav(!configuraiton.IsDvdNavDisabled);
+                HandBrakeUtils.SetDvdNav(!this.userSettingService.GetUserSetting<bool>(UserSettingConstants.DisableLibDvdNav));
 
                 this.ServiceLogMessage("Starting Scan ...");
-                this.instance.StartScan(sourcePath.ToString(), previewCount, minDuration, title != 0 ? title : 0, configuraiton.ScalingMode == VideoScaler.BicubicCl);
+                this.instance.StartScan(sourcePath.ToString(), previewCount, minDuration, title != 0 ? title : 0);
 
-                if (this.ScanStarted != null)
-                    this.ScanStarted(this, System.EventArgs.Empty);
+                this.ScanStarted?.Invoke(this, System.EventArgs.Empty);
             }
             catch (Exception exc)
             {
                 this.ServiceLogMessage("Scan Failed ..." + Environment.NewLine + exc);
                 this.Stop();
-
-                this.ScanCompleted?.Invoke(this, new ScanCompletedEventArgs(false, exc, "An Error has occured in ScanService.ScanSource()", null));
             }
         }
-
-        #endregion
-
-        #region HandBrakeInstance Event Handlers
+        
         /// <summary>
         /// Scan Completed Event Handler
         /// </summary>
@@ -274,42 +257,58 @@ namespace HandBrakeWPF.Services.Scan
         /// </param>
         private void InstanceScanCompleted(object sender, System.EventArgs e)
         {
-            this.ServiceLogMessage("Scan Finished ...");
-            bool cancelled = this.isCancelled;
-            this.isCancelled = false;
-
-            // TODO -> Might be a better place to fix this.
-            string path = this.currentSourceScanPath;
-            if (this.currentSourceScanPath.Contains("\""))
+            try
             {
-                path = this.currentSourceScanPath.Trim('\"');
-            }
+                this.ServiceLogMessage("Processing Scan Information ...");
+                bool cancelled = this.isCancelled;
+                this.isCancelled = false;
 
-            // Process into internal structures.
-            Source sourceData = null;
-            if (this.instance?.Titles != null)
-            {
-                sourceData = new Source { Titles = ConvertTitles(this.instance.Titles), ScanPath = path };
-            }
-
-            this.IsScanning = false;
-
-            if (this.postScanOperation != null)
-            {
-                try
+                // TODO -> Might be a better place to fix this.
+                string path = this.currentSourceScanPath;
+                if (this.currentSourceScanPath.Contains("\""))
                 {
-                    this.postScanOperation(true, sourceData);
-                }
-                catch (Exception exc)
-                {
-                    Debug.WriteLine(exc);
+                    path = this.currentSourceScanPath.Trim('\"');
                 }
 
-                this.postScanOperation = null; // Reset
+                // Process into internal structures.
+                Source sourceData = null;
+                if (this.instance?.Titles != null)
+                {
+                    sourceData = new Source { Titles = this.ConvertTitles(this.instance.Titles), ScanPath = path };
+                }
+
+                this.IsScanning = false;
+
+                if (this.postScanOperation != null)
+                {
+                    try
+                    {
+                        this.postScanOperation(true, sourceData);
+                    }
+                    catch (Exception exc)
+                    {
+                        Debug.WriteLine(exc);
+                    }
+
+                    this.postScanOperation = null; // Reset
+                    this.ServiceLogMessage("Scan Finished for Queue Edit ...");
+                }
+                else
+                {
+                    this.ScanCompleted?.Invoke(
+                        this,
+                        new ScanCompletedEventArgs(cancelled, null, string.Empty, sourceData));
+                    this.ServiceLogMessage("Scan Finished ...");
+                }
             }
-            else
+            finally
             {
-                this.ScanCompleted?.Invoke(this, new ScanCompletedEventArgs(cancelled, null, string.Empty, sourceData));
+                var handBrakeInstance = this.instance;
+                if (handBrakeInstance != null)
+                {
+                    handBrakeInstance.ScanProgress -= this.InstanceScanProgress;
+                    handBrakeInstance.ScanCompleted -= this.InstanceScanCompleted;
+                }
             }
         }
 
@@ -347,104 +346,32 @@ namespace HandBrakeWPF.Services.Scan
         /// <returns>
         /// The convert titles.
         /// </returns>
-        internal static List<Title> ConvertTitles(JsonScanObject titles)
+        private List<Title> ConvertTitles(JsonScanObject titles)
         {
             List<Title> titleList = new List<Title>();
             foreach (SourceTitle title in titles.TitleList)
             {
-                Title converted = new Title
-                    {
-                        TitleNumber = title.Index,
-                        Duration = new TimeSpan(0, title.Duration.Hours, title.Duration.Minutes, title.Duration.Seconds),
-                        Resolution = new Size(title.Geometry.Width, title.Geometry.Height),
-                        AngleCount = title.AngleCount,
-                        ParVal = new Size(title.Geometry.PAR.Num, title.Geometry.PAR.Den),
-                        AutoCropDimensions = new Cropping
-                        {
-                            Top = title.Crop[0],
-                            Bottom = title.Crop[1],
-                            Left = title.Crop[2],
-                            Right = title.Crop[3]
-                        },
-                        Fps = ((double)title.FrameRate.Num) / title.FrameRate.Den,
-                        SourceName = title.Path,
-                        MainTitle = titles.MainFeature == title.Index,
-                        Playlist = title.Type == 1 ? string.Format(" {0:d5}.MPLS", title.Playlist).Trim() : null,
-                        FramerateNumerator = title.FrameRate.Num,
-                        FramerateDenominator = title.FrameRate.Den
-                    };
-
-                int currentTrack = 1;
-                foreach (SourceChapter chapter in title.ChapterList)
-                {
-                    string chapterName = !string.IsNullOrEmpty(chapter.Name) ? chapter.Name : string.Empty;
-                    converted.Chapters.Add(new Chapter(currentTrack, chapterName, new TimeSpan(chapter.Duration.Hours, chapter.Duration.Minutes, chapter.Duration.Seconds)));
-                    currentTrack++;
-                }
-
-                int currentAudioTrack = 1;
-                foreach (SourceAudioTrack track in title.AudioList)
-                {
-                    converted.AudioTracks.Add(new Audio(currentAudioTrack, track.Language, track.LanguageCode, track.Description, track.Codec, track.SampleRate, track.BitRate, track.ChannelLayout));
-                    currentAudioTrack++;
-                }
-
-                int currentSubtitleTrack = 1;
-                foreach (SourceSubtitleTrack track in title.SubtitleList)
-                {
-                    SubtitleType convertedType = new SubtitleType();
-
-                    switch (track.Source)
-                    {
-                        case 0:
-                            convertedType = SubtitleType.VobSub;
-                            break;
-                        case 4:
-                            convertedType = SubtitleType.UTF8Sub;
-                            break;
-                        case 5:
-                            convertedType = SubtitleType.TX3G;
-                            break;
-                        case 6:
-                            convertedType = SubtitleType.SSA;
-                            break;
-                        case 1:
-                            convertedType = SubtitleType.SRT;
-                            break;
-                        case 2:
-                            convertedType = SubtitleType.CC;
-                            break;
-                        case 3:
-                            convertedType = SubtitleType.CC;
-                            break;
-                        case 7:
-                            convertedType = SubtitleType.PGS;
-                            break;
-                    }
-
-                    bool canBurn = HBFunctions.hb_subtitle_can_burn(track.Source) > 0;
-                    bool canSetForcedOnly = HBFunctions.hb_subtitle_can_force(track.Source) > 0;
-
-                    converted.Subtitles.Add(new Subtitle(track.Source, currentSubtitleTrack, track.Language, track.LanguageCode, convertedType, canBurn, canSetForcedOnly));
-                    currentSubtitleTrack++;
-                }
-
+                Title converted = this.titleFactory.CreateTitle(title, titles.MainFeature);
                 titleList.Add(converted);
             }
 
             return titleList;
         }
 
-        /// <summary>
-        /// The service log message.
-        /// </summary>
-        /// <param name="message">
-        /// The message.
-        /// </param>
-        protected void ServiceLogMessage(string message)
+        public void Dispose()
         {
-            this.log.LogMessage(string.Format("{0} # {1}{0}", Environment.NewLine, message), LogMessageType.ScanOrEncode, LogLevel.Info);
+            if (this.instance != null)
+            {
+                try
+                {
+                    this.instance.Dispose();
+                    this.instance = null;
+                }
+                catch (Exception e)
+                {
+                    this.ServiceLogMessage("Unable to Dispose of LibScan: " + e);
+                }            
+            }
         }
-        #endregion
     }
 }

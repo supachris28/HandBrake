@@ -1,13 +1,12 @@
 /*
  * preview.h
- * Copyright (C) John Stebbins 2008-2017 <stebbins@stebbins>
+ * Copyright (C) John Stebbins 2008-2020 <stebbins@stebbins>
  *
  * preview.h is free software.
  *
  * You may redistribute it and/or modify it under the terms of the
- * GNU General Public License, as published by the Free Software
- * Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * GNU General Public License version 2, as published by the Free Software
+ * Foundation.
  *
  * preview.h is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -35,6 +34,6 @@ void ghb_live_encode_done(signal_user_data_t *ud, gboolean success);
 void ghb_preview_cleanup(signal_user_data_t *ud);
 void ghb_live_reset(signal_user_data_t *ud);
 void ghb_par_scale(signal_user_data_t *ud, gint *width, gint *height, gint par_n, gint par_d);
-void ghb_preview_set_visible(signal_user_data_t *ud);
+void ghb_preview_set_visible(signal_user_data_t *ud, gboolean visible);
 
 #endif // _GHB_PREVIEW_H_

@@ -1,6 +1,6 @@
 /* hb_dict.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
@@ -9,8 +9,8 @@
 
 #include <ctype.h>
 #include <stdio.h>
-#include "hb.h"
-#include "hb_dict.h"
+#include "handbrake/handbrake.h"
+#include "handbrake/hb_dict.h"
 
 hb_value_type_t hb_value_type(const hb_value_t *value)
 {
@@ -92,8 +92,16 @@ hb_value_t * hb_value_json(const char *json)
 
 hb_value_t * hb_value_read_json(const char *path)
 {
+    FILE * fp;
     json_error_t error;
-    hb_value_t *val = json_load_file(path, 0, &error);
+
+    fp = hb_fopen(path, "r");
+    if (fp == NULL)
+    {
+        return NULL;
+    }
+    hb_value_t *val = json_loadf(fp, 0, &error);
+    fclose(fp);
     return val;
 }
 
@@ -469,6 +477,11 @@ void hb_dict_set(hb_dict_t * dict, const char *key, hb_value_t *value)
     json_object_set_new(dict, key, value);
 }
 
+void hb_dict_merge(hb_dict_t * dict, hb_dict_t *value)
+{
+    json_object_update(dict, value);
+}
+
 void hb_dict_case_set(hb_dict_t * dict, const char *key, hb_value_t *value)
 {
     char * lower = makelower(key);
@@ -606,7 +619,7 @@ int hb_dict_extract_rational(hb_rational_t *dst, const hb_dict_t * dict,
         {
             return 0;
         }
-        hb_value_t * den_val = hb_dict_get(val, "Num");
+        hb_value_t * den_val = hb_dict_get(val, "Den");
         if (den_val == NULL)
         {
             return 0;
@@ -826,7 +839,7 @@ hb_dict_t * hb_encopts_to_dict(const char * encopts, int encoder)
                 // x264 has multiple names for some options
                 if (encoder & HB_VCODEC_X264_MASK)
                     name = hb_x264_encopt_name(name);
-#ifdef USE_X265
+#if HB_PROJECT_FEATURE_X265
                 // x265 has multiple names for some options
                 if (encoder & HB_VCODEC_X265_MASK)
                     name = hb_x265_encopt_name(name);

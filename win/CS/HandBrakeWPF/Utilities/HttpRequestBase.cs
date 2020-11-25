@@ -1,0 +1,90 @@
+﻿// --------------------------------------------------------------------------------------------------------------------
+// <copyright file="HttpRequestBase.cs" company="HandBrake Project (http://handbrake.fr)">
+//   This file is part of the HandBrake source code - It may be used under the terms of the GNU General Public License.
+// </copyright>
+// <summary>
+//   Defines the HttpRequestBase type.
+// </summary>
+// --------------------------------------------------------------------------------------------------------------------
+
+namespace HandBrakeWPF.Utilities
+{
+    using System;
+    using System.Net;
+    using System.Net.Http;
+    using System.Text;
+    using System.Threading.Tasks;
+
+    using HandBrakeWPF.Instance.Model;
+
+    using Newtonsoft.Json;
+
+    public class HttpRequestBase
+    {
+        protected string serverUrl;
+
+        protected int port;
+
+        protected string base64Token;
+
+        private readonly JsonSerializerSettings jsonNetSettings = new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore };
+        
+        public async Task<ServerResponse> MakeHttpJsonPostRequest(string urlPath, string json)
+        {
+            if (string.IsNullOrEmpty(json))
+            {
+                throw new InvalidOperationException("No Post Values Found.");
+            }
+
+            using (HttpClient client = new HttpClient())
+            {
+                HttpRequestMessage requestMessage = new HttpRequestMessage(HttpMethod.Post, this.serverUrl + urlPath);
+                if (!string.IsNullOrEmpty(this.base64Token))
+                {
+                    requestMessage.Headers.Add("token", this.base64Token);
+                }
+
+                requestMessage.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                using (HttpResponseMessage response = await client.SendAsync(requestMessage))
+                {
+                    if (response != null)
+                    {
+                        string returnContent = await response.Content.ReadAsStringAsync();
+                        ServerResponse serverResponse = new ServerResponse(response.IsSuccessStatusCode, returnContent);
+
+                        return serverResponse;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        public async Task<ServerResponse> MakeHttpGetRequest(string urlPath)
+        {
+            using (HttpClient client = new HttpClient())
+            {
+                HttpRequestMessage requestMessage = new HttpRequestMessage(HttpMethod.Get, this.serverUrl + urlPath);
+                if (!string.IsNullOrEmpty(this.base64Token))
+                {
+                    requestMessage.Headers.Add("token", this.base64Token);
+                }
+
+                using (HttpResponseMessage response = await client.SendAsync(requestMessage))
+                {
+                    if (response != null)
+                    {
+                        string returnContent = await response.Content.ReadAsStringAsync();
+                        ServerResponse serverResponse = null;
+                        serverResponse = response.StatusCode == HttpStatusCode.Unauthorized ? new ServerResponse(false, returnContent) : new ServerResponse(response.IsSuccessStatusCode, returnContent);
+
+                        return serverResponse;
+                    }
+                }
+            }
+
+            return null;
+        }
+    }
+}

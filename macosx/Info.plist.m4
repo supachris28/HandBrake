@@ -58,7 +58,7 @@ dnl
 	<key>LSMinimumSystemVersion</key>
 	<string>${MACOSX_DEPLOYMENT_TARGET}</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2003-2017 __HB_name Team.
+	<string>Copyright © 2003-2020 __HB_name Team.
 GPLv2 license.</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
@@ -70,5 +70,11 @@ GPLv2 license.</string>
 	<string>dsa_pub.pem</string>
 	<key>SUAllowsAutomaticUpdates</key>
 	<false/>
+	<key>NSUserNotificationAlertStyle</key>
+	<string>alert</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>HandBrake needs access to shut down or put the computer to sleep</string>
+	<key>NSAppleScriptEnabled</key>
+	<true/>
 </dict>
 </plist>

@@ -1,14 +1,14 @@
-/**
- * @file
- * @date 18.5.2007
- *
- * Implementation of class HBOutputPanelController.
- */
+/*  HBOutputPanelController.m
+
+ This file is part of the HandBrake source code.
+ Homepage: <http://handbrake.fr/>.
+ It may be used under the terms of the GNU General Public License. */
 
 #import "HBOutputPanelController.h"
 #import "HBOutputRedirect.h"
 #import "HBOutputFileWriter.h"
-#import "HBUtilities.h"
+
+@import HandBrakeKit.HBUtilities;
 
 /// Maximum amount of characters that can be shown in the view.
 #define TextStorageUpperSizeLimit 125000
@@ -18,13 +18,13 @@
 #define TextStorageLowerSizeLimit 120000
 
 @interface HBOutputPanelController () <HBOutputRedirectListening>
-{
-    /// Textview that displays debug output.
-    IBOutlet NSTextView *textView;
 
-    /// Text storage for the debug output.
-    NSTextStorage *outputTextStorage;
-}
+/// Textview that displays debug output.
+@property (nonatomic, unsafe_unretained) IBOutlet NSTextView *textView;
+
+/// Text storage for the debug output.
+@property (nonatomic, readonly) NSTextStorage *outputTextStorage;
+@property (nonatomic, readonly) NSDictionary *textAttributes;
 
 /// Path to log text file.
 @property (nonatomic, copy, readonly) HBOutputFileWriter *outputFile;
@@ -40,93 +40,92 @@
 {
     if( (self = [super initWithWindowNibName:@"OutputPanel"]) )
     {
-        /* NSWindowController likes to lazily load its window nib. Since this
-         * controller tries to touch the outlets before accessing the window, we
-         * need to force it to load immadiately by invoking its accessor.
-         *
-         * If/when we switch to using bindings, this can probably go away.
-         */
-        (void)[self window];
+        // We initialize the outputTextStorage object for the activity window
+        _outputTextStorage = [[NSTextStorage alloc] init];
 
-        // Additionally, redirect the output to a file on the disk.
-        NSURL *outputLogFile = [[HBUtilities appSupportURL] URLByAppendingPathComponent:@"HandBrake-activitylog.txt"];
+        // Text attributes
+        _textAttributes = @{NSForegroundColorAttributeName: NSColor.textColor};
+
+        // Add ourself as stderr/stdout listener
+        [HBOutputRedirect.stderrRedirect addListener:self queue:dispatch_get_main_queue()];
+        [HBOutputRedirect.stdoutRedirect addListener:self queue:dispatch_get_main_queue()];
+
+        // Redirect the output to a file on the disk.
+        NSURL *outputLogFile = [HBUtilities.appSupportURL URLByAppendingPathComponent:@"HandBrake-activitylog.txt"];
 
         _outputFile = [[HBOutputFileWriter alloc] initWithFileURL:outputLogFile];
         if (_outputFile)
         {
-            [[HBOutputRedirect stderrRedirect] addListener:_outputFile];
-            [[HBOutputRedirect stdoutRedirect] addListener:_outputFile];
+            [HBOutputRedirect.stderrRedirect addListener:_outputFile queue:dispatch_get_main_queue()];
+            [HBOutputRedirect.stdoutRedirect addListener:_outputFile queue:dispatch_get_main_queue()];
         }
 
-        // We initialize the outputTextStorage object for the activity window
-        outputTextStorage = [[NSTextStorage alloc] init];
-        [[textView layoutManager] replaceTextStorage:outputTextStorage];
-        [[textView enclosingScrollView] setLineScroll:10];
-        [[textView enclosingScrollView] setPageScroll:20];
-
-        // Add ourself as stderr/stdout listener
-        [[HBOutputRedirect stderrRedirect] addListener:self];
-        [[HBOutputRedirect stdoutRedirect] addListener:self];
-
-        // Lets report the HandBrake version number here to the activity log and text log file
-        NSDictionary *infoDict = [[NSBundle mainBundle] infoDictionary];
-        NSString *versionStringFull = [NSString stringWithFormat:@"Handbrake Version: %@  (%@)", infoDict[@"CFBundleShortVersionString"], infoDict[@"CFBundleVersion"]];
-        [HBUtilities writeToActivityLog: "%s", versionStringFull.UTF8String];
+        [self writeHeader];
     }
     return self;
 }
 
-/**
- * Stops redirection of stderr and releases resources.
- */
 - (void)dealloc
 {
-    [[HBOutputRedirect stderrRedirect] removeListener:self];
-    [[HBOutputRedirect stdoutRedirect] removeListener:self];
+    [HBOutputRedirect.stderrRedirect removeListener:self];
+    [HBOutputRedirect.stdoutRedirect removeListener:self];
 }
 
-/**
- * Loads output panel from OutputPanel.nib and shows it.
- */
+- (void)windowDidLoad
+{
+    [super windowDidLoad];
+
+    [_textView.layoutManager replaceTextStorage:_outputTextStorage];
+    [_textView.enclosingScrollView setLineScroll:10];
+    [_textView.enclosingScrollView setPageScroll:20];
+
+    [_textView scrollToEndOfDocument:self];
+}
+
 - (IBAction)showWindow:(id)sender
 {
-    [textView scrollToEndOfDocument:self];
+    [_textView scrollToEndOfDocument:self];
     [super showWindow:sender];
 }
 
 /**
- * Displays text received from HBOutputRedirect in the text view
- * and write it to the log files.
+ Write the HandBrake version number to the log
  */
-- (void)stderrRedirect:(NSString *)text
+- (void)writeHeader
 {
-    NSAttributedString *attributedString = [[NSAttributedString alloc] initWithString:text];
-	/* Actually write the libhb output to the text view (outputTextStorage) */
-    [outputTextStorage appendAttributedString:attributedString];
-    
-	/* remove text from outputTextStorage as defined by TextStorageUpperSizeLimit and TextStorageLowerSizeLimit */
-    if (outputTextStorage.length > TextStorageUpperSizeLimit)
+    NSDictionary *infoDict = NSBundle.mainBundle.infoDictionary;
+    NSString *versionStringFull = [NSString stringWithFormat:@"Handbrake Version: %@ (%@)", infoDict[@"CFBundleShortVersionString"], infoDict[@"CFBundleVersion"]];
+    [HBUtilities writeToActivityLog:"%s", versionStringFull.UTF8String];
+}
+
+/**
+ * Displays text received from HBOutputRedirect in the text view
+ */
+- (void)redirect:(NSString *)text type:(HBRedirectType)type
+{
+    NSAttributedString *attributedString = [[NSAttributedString alloc] initWithString:text attributes:_textAttributes];
+	// Actually write the libhb output to the text view (outputTextStorage)
+    [_outputTextStorage appendAttributedString:attributedString];
+
+	// remove text from outputTextStorage as defined by TextStorageUpperSizeLimit and TextStorageLowerSizeLimit */
+    if (_outputTextStorage.length > TextStorageUpperSizeLimit)
     {
-		[outputTextStorage deleteCharactersInRange:NSMakeRange(0, [outputTextStorage length] - TextStorageLowerSizeLimit)];
+		[_outputTextStorage deleteCharactersInRange:NSMakeRange(0, _outputTextStorage.length - TextStorageLowerSizeLimit)];
     }
 
-    if (self.window.isVisible)
+    if (self.windowLoaded && self.window.isVisible)
     {
-        [textView scrollToEndOfDocument:self];
+        [_textView scrollToEndOfDocument:self];
     }
 }
-- (void)stdoutRedirect:(NSString *)text { [self stderrRedirect:text]; }
 
 /**
  * Clears the output window.
  */
 - (IBAction)clearOutput:(id)sender
 {
-	[outputTextStorage deleteCharactersInRange:NSMakeRange(0, [outputTextStorage length])];
-    /* We want to rewrite the app version info to the top of the activity window so it is always present */
-    time_t _now = time( NULL );
-    struct tm * now  = localtime( &_now );
-    fprintf(stderr, "[%02d:%02d:%02d] macgui: %s\n", now->tm_hour, now->tm_min, now->tm_sec, [[HBUtilities handBrakeVersion] UTF8String]);
+	[_outputTextStorage deleteCharactersInRange:NSMakeRange(0, _outputTextStorage.length)];
+    [self writeHeader];
 }
 
 /**
@@ -134,9 +133,9 @@
  */
 - (IBAction)copyAllOutputToPasteboard:(id)sender
 {
-	NSPasteboard *pboard = [NSPasteboard generalPasteboard];
-	[pboard declareTypes:@[NSStringPboardType] owner:nil];
-	[pboard setString:[outputTextStorage string] forType:NSStringPboardType];
+	NSPasteboard *pboard = NSPasteboard.generalPasteboard;
+    [pboard declareTypes:@[NSPasteboardTypeString] owner:nil];
+    [pboard setString:_outputTextStorage.string forType:NSPasteboardTypeString];
 }
 
 /**
@@ -144,8 +143,7 @@
  */
 - (IBAction)openActivityLogFile:(id)sender
 {
-    /* Opens the activity window log file in the users default text editor */
-    [[NSWorkspace sharedWorkspace] openURL:self.outputFile.url];
+    [NSWorkspace.sharedWorkspace openURL:self.outputFile.url];
 }
 
 /**
@@ -153,16 +151,16 @@
  */
 - (IBAction)openEncodeLogDirectory:(id)sender
 {
-    /* Opens the activity window log file in the users default text editor */
-    NSURL *encodeLogDirectory = [[HBUtilities appSupportURL] URLByAppendingPathComponent:@"EncodeLogs"];
-    if( ![[NSFileManager defaultManager] fileExistsAtPath:encodeLogDirectory.path] )
+    // Opens the activity window log file in the users default text editor
+    NSURL *encodeLogDirectory = [HBUtilities.appSupportURL URLByAppendingPathComponent:@"EncodeLogs"];
+    if (![NSFileManager.defaultManager fileExistsAtPath:encodeLogDirectory.path])
     {
-        [[NSFileManager defaultManager] createDirectoryAtPath:encodeLogDirectory.path
-                                            withIntermediateDirectories:NO
-                                            attributes:nil
-                                            error:nil];
+        [NSFileManager.defaultManager createDirectoryAtPath:encodeLogDirectory.path
+                                withIntermediateDirectories:NO
+                                                 attributes:nil
+                                                      error:nil];
     }
-    [[NSWorkspace sharedWorkspace] openURL:encodeLogDirectory];
+    [NSWorkspace.sharedWorkspace openURL:encodeLogDirectory];
 }
 
 - (IBAction)clearActivityLogFile:(id)sender

@@ -1,7 +1,11 @@
-__deps__ := A52DEC BZIP2 LIBVPX FFMPEG FONTCONFIG FREETYPE LAME LIBASS LIBDCA \
+__deps__ := A52DEC BZIP2 LIBVPX FFMPEG FREETYPE LAME LIBASS LIBDCA \
     LIBDVDREAD LIBDVDNAV LIBICONV LIBSAMPLERATE LIBTHEORA LIBVORBIS LIBOGG \
-    LIBXML2 PTHREADW32 X264 X265 ZLIB LIBBLURAY FDKAAC LIBMFX LIBGNURX JANSSON \
-    HARFBUZZ LIBOPUS
+    LIBXML2 X264 X265 ZLIB LIBBLURAY FDKAAC LIBMFX LIBGNURX JANSSON \
+    HARFBUZZ LIBOPUS LIBSPEEX LIBDAV1D LIBJPEGTURBO
+
+ifeq (,$(filter $(HOST.system),darwin cygwin mingw))
+    __deps__ += FONTCONFIG
+endif
 
 $(eval $(call import.MODULE.defs,LIBHB,libhb,$(__deps__)))
 $(eval $(call import.GCC,LIBHB))
@@ -11,7 +15,7 @@ $(eval $(call import.GCC,LIBHB))
 LIBHB.src/   = $(SRC/)libhb/
 LIBHB.build/ = $(BUILD/)libhb/
 
-LIBHB.m4.in  = $(wildcard $(LIBHB.src/)*.m4)
+LIBHB.m4.in  = $(wildcard $(LIBHB.src/)handbrake/*.m4)
 LIBHB.m4.out = $(patsubst $(LIBHB.src/)%.m4,$(LIBHB.build/)%,$(LIBHB.m4.in))
 
 LIBHB.c   = $(wildcard $(LIBHB.src/)*.c)
@@ -20,7 +24,7 @@ LIBHB.m.o = $(patsubst $(SRC/)%.m,$(BUILD/)%.o,$(LIBHB.m))
 LIBHB.d   = $(LIBHB.m4.out) $(LIBHB.h.out) \
     $(foreach n,$(LIBHB.prerequisites),$($n.INSTALL.target) )
 
-LIBHB.h.in  = $(wildcard $(LIBHB.src/)*.h)
+LIBHB.h.in  = $(wildcard $(LIBHB.src/)handbrake/*.h)
 LIBHB.h.in += $(wildcard $(LIBHB.src/)extras/*.h)
 LIBHB.h.out = $(patsubst $(SRC/)%,$(BUILD/)%,$(LIBHB.h.in))
 
@@ -38,45 +42,54 @@ LIBHB.out += $(LIBHB.a)
 
 ###############################################################################
 
-ifeq (1,$(FEATURE.libav_aac))
-LIBHB.GCC.D += USE_LIBAV_AAC
-endif
 LIBHB.GCC.D += __LIBHB__ USE_PTHREAD
 LIBHB.GCC.I += $(LIBHB.build/) $(CONTRIB.build/)include
 
-ifneq (,$(filter $(BUILD.system),darwin cygwin mingw))
-LIBHB.GCC.I += $(CONTRIB.build/)include/libxml2
+ifneq (,$(filter $(HOST.system),freebsd netbsd))
+    LIBHB.GCC.I += $(LOCALBASE)/include
+    LIBHB.GCC.I += $(LOCALBASE)/include/libxml2
+else ifneq (,$(filter $(HOST.system),darwin cygwin mingw))
+    LIBHB.GCC.I += $(CONTRIB.build/)include/libxml2
 else
-LIBHB.GCC.I += /usr/include/libxml2
+    LIBHB.libxml2 := $(shell $(PKGCONFIG.exe) --silence-errors --cflags libxml2)
+    ifeq (,$(LIBHB.libxml2))
+        LIBHB.libxml2 := $(shell $(PKGCONFIG.exe) --silence-errors --cflags libxml-2.0)
+    endif
+    ifneq (,$(LIBHB.libxml2))
+        LIBHB.libxml2 := $(patsubst -I%,%,$(LIBHB.libxml2))
+        LIBHB.GCC.I += $(LIBHB.libxml2)
+    else
+        LIBHB.GCC.I += /usr/include/libxml2
+    endif
 endif
 
-ifeq ($(BUILD.system),cygwin)
+ifeq ($(HOST.system),cygwin)
     LIBHB.GCC.D += SYS_CYGWIN
-else ifeq ($(BUILD.system),darwin)
+else ifeq ($(HOST.system),darwin)
     LIBHB.GCC.D += SYS_DARWIN
     LIBHB.c += $(wildcard $(LIBHB.src/)platform/macosx/*.c)
     LIBHB.m += $(wildcard $(LIBHB.src/)platform/macosx/*.m)
-else ifeq ($(BUILD.system),linux)
+else ifeq ($(HOST.system),linux)
     LIBHB.GCC.D += SYS_LINUX _LARGEFILE_SOURCE _FILE_OFFSET_BITS=64
-else ifeq ($(BUILD.system),mingw)
+else ifeq ($(HOST.system),freebsd)
+    LIBHB.GCC.D += SYS_FREEBSD _LARGEFILE_SOURCE _FILE_OFFSET_BITS=64
+else ifeq ($(HOST.system),netbsd)
+    LIBHB.GCC.D += SYS_NETBSD _LARGEFILE_SOURCE _FILE_OFFSET_BITS=64
+else ifeq ($(HOST.system),mingw)
     LIBHB.GCC.D += SYS_MINGW
 ifneq ($(HAS.pthread),1)
     LIBHB.GCC.D += PTW32_STATIC_LIB
 endif
 	LIBHB.GCC.args.extra.dylib++ += -Wl,--enable-auto-import -static
-else ifeq ($(BUILD.system),solaris)
+else ifeq ($(HOST.system),solaris)
     LIBHB.GCC.D += SYS_SunOS _LARGEFILE_SOURCE _FILE_OFFSET_BITS=64 _POSIX_C_SOURCE=200112L __EXTENSIONS__
 else
     LIBHB.platform.D = SYS_UNKNOWN
 endif
 
-ifeq (1,$(FEATURE.qsv))    
-    LIBHB.GCC.D += USE_QSV HAVE_THREADS=1
-endif  
-
-ifeq (1,$(FEATURE.x265))
-    LIBHB.GCC.D += USE_X265
-endif  
+ifeq (1,$(FEATURE.qsv))
+    LIBHB.GCC.D += HAVE_THREADS=1
+endif
 
 ifeq (1,$(COMPAT.strtok_r))
     LIBHB.GCC.D += HB_NEED_STRTOK_R
@@ -87,44 +100,21 @@ ifeq (1,$(HAS.strerror_r))
 endif
 
 ## required for <libdvdread/*.h>
-ifneq (,$(filter $(BUILD.arch),ppc ppc64))
+ifneq (,$(filter $(HOST.arch),ppc ppc64))
 	LIBHB.GCC.D += WORDS_BIGENDIAN
 endif
 
 ###############################################################################
 
-## when defined this gives us the subdir name, or flavor of asm implementation
-ifneq (disabled,$(FEATURE.asm))
-
-LIBHB.yasm.src/   = $(LIBHB.src/)$(FEATURE.asm)/
-LIBHB.yasm.build/ = $(LIBHB.build/)$(FEATURE.asm)/
-LIBHB.yasm.asm    = $(LIBHB.yasm.src/)deinterlace-a.asm
-LIBHB.yasm.o      = $(LIBHB.yasm.asm:$(LIBHB.yasm.src/)%.asm=$(LIBHB.yasm.build/)%.o)
-LIBHB.yasm.d      = $(wildcard $(LIBHB.yasmsrc/)*.h)
-
-LIBHB.YASM.I     = $(LIBHB.yasm.src/)
-LIBHB.YASM.ASM_O = $(strip $(YASM.exe) \
-    -f $(LIBHB.YASM.f) \
-    -m $(LIBHB.YASM.m) \
-    $(LIBHB.YASM.D:%=-D%) \
-    $(LIBHB.YASM.I:%=-I%) \
-    -o $(1) $(2))
-
-LIBHB.out += $(LIBHB.yasm.o)
-
-endif
-
-###############################################################################
-
-ifeq (1-mingw,$(BUILD.cross)-$(BUILD.system))
+ifeq (1-mingw,$(HOST.cross)-$(HOST.system))
 
 LIBHB.dll = $(LIBHB.build/)hb.dll
 LIBHB.lib = $(LIBHB.build/)hb.lib
 
 LIBHB.dll.libs = $(foreach n, \
-        ass avcodec avformat avfilter avutil avresample dvdnav dvdread fontconfig \
-        freetype mp3lame samplerate swscale vpx theora vorbis vorbisenc ogg \
-        x264 xml2 bluray jansson harfbuzz opus, \
+        ass avformat avfilter avcodec avutil swresample postproc dvdnav dvdread \
+        freetype mp3lame swscale vpx theora vorbis vorbisenc ogg x264 xml2 \
+        bluray jansson harfbuzz opus speex dav1d turbojpeg, \
         $(CONTRIB.build/)lib/lib$(n).a )
 
 ifeq (1,$(FEATURE.fdk_aac))
@@ -159,10 +149,6 @@ endif
 
 ifeq ($(HAS.pthread),1)
     LIBHB.GCC.l += pthread
-else ifneq ($(HAS.pthreadGC2),1)
-LIBHB.dll.libs += $(CONTRIB.build/)lib/libpthreadGC2.a
-else
-    LIBHB.GCC.l += pthreadGC2
 endif
 
 ifneq ($(HAS.bz2),1)
@@ -177,8 +163,14 @@ else
     LIBHB.GCC.l += z
 endif
 
+ifneq ($(HAS.xz),1)
+LIBHB.dll.libs += $(CONTRIB.build/)lib/liblzma.a
+else
+    LIBHB.GCC.l += lzma
+endif
+
 LIBHB.GCC.args.extra.dylib++ += -Wl,--out-implib,$(LIBHB.lib)
-LIBHB.GCC.l += ws2_32 uuid ole32
+LIBHB.GCC.l += bcrypt ws2_32 uuid ole32
 ifeq ($(HAS.dlfcn),1)
     LIBHB.GCC.l += dl
 endif

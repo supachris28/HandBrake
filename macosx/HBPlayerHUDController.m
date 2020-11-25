@@ -5,24 +5,29 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import "HBPlayerHUDController.h"
+#import "HBAttributedStringAdditions.h"
 
 @interface HBPlayerHUDController ()
 
-@property (weak) IBOutlet NSButton *playButton;
-@property (weak) IBOutlet NSSlider *slider;
+@property (nonatomic, weak) IBOutlet NSButton *playButton;
+@property (nonatomic, weak) IBOutlet NSSlider *slider;
 
-@property (weak) IBOutlet NSSlider *volumeSlider;
+@property (nonatomic, weak) IBOutlet NSSlider *volumeSlider;
 
-@property (weak) IBOutlet NSTextField *currentTimeLabel;
-@property (weak) IBOutlet NSTextField *remaingTimeLabel;
+@property (nonatomic, weak) IBOutlet NSTextField *currentTimeLabel;
+@property (nonatomic, weak) IBOutlet NSTextField *remaingTimeLabel;
 
-@property (weak) IBOutlet NSPopUpButton *tracksSelection;
-
-@property (nonatomic, readonly) NSDictionary *monospacedAttr;
+@property (nonatomic, weak) IBOutlet NSPopUpButton *tracksSelection;
 
 @property (nonatomic, readwrite) id rateObserver;
 @property (nonatomic, readwrite) id periodicObserver;
 
+@end
+
+@interface HBPlayerHUDController (TouchBar) <NSTouchBarProvider, NSTouchBarDelegate>
+- (void)_touchBar_updatePlayState:(BOOL)playing;
+- (void)_touchBar_updateMaxDuration:(NSTimeInterval)duration;
+- (void)_touchBar_updateTime:(NSTimeInterval)currentTime duration:(NSTimeInterval)duration;
 @end
 
 @implementation HBPlayerHUDController
@@ -30,24 +35,6 @@
 - (NSString *)nibName
 {
     return @"HBPlayerHUDController";
-}
-
-- (void)loadView
-{
-    [super loadView];
-
-    if (NSClassFromString(@"NSVisualEffectView") == NO)
-    {
-        self.currentTimeLabel.textColor = [NSColor whiteColor];
-        self.remaingTimeLabel.textColor = [NSColor whiteColor];
-    }
-
-    if ([[NSFont class] respondsToSelector:@selector(monospacedDigitSystemFontOfSize:weight:)]) {
-        _monospacedAttr = @{NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:[NSFont smallSystemFontSize] weight:NSFontWeightRegular]};
-    }
-    else {
-        _monospacedAttr = @{NSFontAttributeName: [NSFont systemFontOfSize:[NSFont smallSystemFontSize]]};
-    }
 }
 
 - (BOOL)canBeHidden
@@ -72,29 +59,25 @@
     {
         [self _buildTracksMenu];
 
-        // 10.7 does not supports weak NSViewController,
-        // so use self and disable the warning for now.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-retain-cycles"
+        __weak HBPlayerHUDController *weakSelf = self;
 
         self.periodicObserver = [self.player addPeriodicTimeObserverUsingBlock:^(NSTimeInterval time) {
-            [self _refreshUI];
+            [weakSelf _refreshUI];
         }];
 
         self.rateObserver = [self.player addRateObserverUsingBlock:^{
-            if (self.player.rate != 0.0)
-            {
-                self.playButton.image = [NSImage imageNamed:@"PauseTemplate"];
-            }
-            else
-            {
-                self.playButton.image = [NSImage imageNamed:@"PlayTemplate"];
-            }
+            [weakSelf _refreshPlayButtonState];
         }];
 
+        NSTimeInterval duration = self.player.duration;
         [self.slider setMinValue:0.0];
-        [self.slider setMaxValue:self.player.duration];
+        [self.slider setMaxValue:duration];
         [self.slider setDoubleValue:0.0];
+
+        if (@available(macOS 10.12.2, *))
+        {
+            [self _touchBar_updateMaxDuration:duration];
+        }
 
         self.player.volume = self.volumeSlider.floatValue;
 
@@ -125,7 +108,7 @@
     NSArray<HBPlayerTrack *> *audioTracks = self.player.audioTracks;
     if (audioTracks.count)
     {
-        [self _addSectionTitle:NSLocalizedString(@"Audio", nil)];
+        [self _addSectionTitle:NSLocalizedString(@"Audio", @"Player HUD -> audio menu")];
         [self _addTracksItemFromArray:audioTracks selector:@selector(enableAudioTrack:)];
     }
 
@@ -136,7 +119,7 @@
         {
             [self.tracksSelection.menu addItem:[NSMenuItem separatorItem]];
         }
-        [self _addSectionTitle:NSLocalizedString(@"Subtitles", nil)];
+        [self _addSectionTitle:NSLocalizedString(@"Subtitles", @"Player HUD -> subtitles menu")];
         [self _addTracksItemFromArray:subtitlesTracks selector:@selector(enableSubtitlesTrack:)];
     }
 }
@@ -210,12 +193,6 @@
     return [NSString stringWithFormat:@"%02d:%02d.%03d", minutes, seconds, milliseconds];
 }
 
-- (NSAttributedString *)_monospacedString:(NSString *)string
-{
-    return [[NSAttributedString alloc] initWithString:string attributes:self.monospacedAttr];
-
-}
-
 - (void)_refreshUI
 {
     if (self.player)
@@ -224,8 +201,31 @@
         NSTimeInterval duration = self.player.duration;
 
         self.slider.doubleValue = currentTime;
-        self.currentTimeLabel.attributedStringValue = [self _monospacedString:[self _timeToTimecode:currentTime]];
-        self.remaingTimeLabel.attributedStringValue = [self _monospacedString:[self _timeToTimecode:duration - currentTime]];
+        self.currentTimeLabel.attributedStringValue = [self _timeToTimecode:currentTime].HB_smallMonospacedString;
+        self.remaingTimeLabel.attributedStringValue = [self _timeToTimecode:duration - currentTime].HB_smallMonospacedString;
+
+        if (@available(macOS 10.12.2, *))
+        {
+            [self _touchBar_updateTime:currentTime duration:duration];
+        }
+    }
+}
+
+- (void)_refreshPlayButtonState
+{
+    BOOL playing = self.player.rate != 0.0;
+    if (playing)
+    {
+        self.playButton.image = [NSImage imageNamed:@"PauseTemplate"];
+    }
+    else
+    {
+        self.playButton.image = [NSImage imageNamed:@"PlayTemplate"];
+    }
+
+    if (@available(macOS 10.12.2, *))
+    {
+        [self _touchBar_updatePlayState:playing];
     }
 }
 
@@ -309,11 +309,11 @@
             [self.player play];
             self.player.rate = rate;
         }
-        else if (event.modifierFlags & NSAlternateKeyMask && key == NSLeftArrowFunctionKey)
+        else if (event.modifierFlags & NSEventModifierFlagOption && key == NSLeftArrowFunctionKey)
         {
             [self.player gotoBeginning];
         }
-        else if (event.modifierFlags & NSAlternateKeyMask && key == NSRightArrowFunctionKey)
+        else if (event.modifierFlags & NSEventModifierFlagOption && key == NSRightArrowFunctionKey)
         {
             [self.player gotoEnd];
         }
@@ -338,7 +338,7 @@
     return YES;
 }
 
-- (BOOL)HB_scrollWheel:(NSEvent *)theEvent;
+- (BOOL)HB_scrollWheel:(NSEvent *)theEvent
 {
     if (theEvent.deltaY < 0)
     {
@@ -349,6 +349,147 @@
         self.player.currentTime = self.player.currentTime - 0.5;
     }
     return YES;
+}
+
+@end
+
+@implementation HBPlayerHUDController (TouchBar)
+
+static NSTouchBarItemIdentifier HBTouchBar = @"fr.handbrake.playerHUDTouchBar";
+
+static NSTouchBarItemIdentifier HBTouchBarDone = @"fr.handbrake.done";
+static NSTouchBarItemIdentifier HBTouchBarPlayPause = @"fr.handbrake.playPause";
+static NSTouchBarItemIdentifier HBTouchBarCurrentTime = @"fr.handbrake.currentTime";
+static NSTouchBarItemIdentifier HBTouchBarRemainingTime = @"fr.handbrake.remainingTime";
+static NSTouchBarItemIdentifier HBTouchBarTimeSlider = @"fr.handbrake.timeSlider";
+
+@dynamic touchBar;
+
+- (NSTouchBar *)makeTouchBar
+{
+    NSTouchBar *bar = [[NSTouchBar alloc] init];
+    bar.delegate = self;
+
+    bar.escapeKeyReplacementItemIdentifier = HBTouchBarDone;
+
+    bar.defaultItemIdentifiers = @[HBTouchBarPlayPause, NSTouchBarItemIdentifierFixedSpaceSmall, HBTouchBarCurrentTime, NSTouchBarItemIdentifierFixedSpaceSmall, HBTouchBarTimeSlider, NSTouchBarItemIdentifierFixedSpaceSmall, HBTouchBarRemainingTime];
+
+    bar.customizationIdentifier = HBTouchBar;
+    bar.customizationAllowedItemIdentifiers = @[HBTouchBarPlayPause, HBTouchBarCurrentTime, HBTouchBarTimeSlider, HBTouchBarRemainingTime, NSTouchBarItemIdentifierFlexibleSpace];
+
+    return bar;
+}
+
+- (NSTouchBarItem *)touchBar:(NSTouchBar *)touchBar makeItemForIdentifier:(NSTouchBarItemIdentifier)identifier
+{
+    if ([identifier isEqualTo:HBTouchBarDone])
+    {
+        NSCustomTouchBarItem *item = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
+        item.customizationLabel = NSLocalizedString(@"Done", @"Touch bar");
+
+        NSButton *button = [NSButton buttonWithTitle:NSLocalizedString(@"Done", @"Touch bar") target:self action:@selector(showPicturesPreview:)];
+        button.bezelColor = NSColor.systemYellowColor;
+
+        item.view = button;
+        return item;
+    }
+    else if ([identifier isEqualTo:HBTouchBarPlayPause])
+    {
+        NSCustomTouchBarItem *item = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
+        item.customizationLabel = NSLocalizedString(@"Play/Pause", @"Touch bar");
+
+        NSButton *button = [NSButton buttonWithImage:[NSImage imageNamed:NSImageNameTouchBarPlayTemplate]
+                                              target:self action:@selector(playPauseToggle:)];
+
+        item.view = button;
+        return item;
+    }
+    else if ([identifier isEqualTo:HBTouchBarCurrentTime])
+    {
+        NSCustomTouchBarItem *item = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
+        item.customizationLabel = NSLocalizedString(@"Current Time", @"Touch bar");
+
+        NSTextField *label = [NSTextField labelWithString:NSLocalizedString(@"--:--", @"")];
+
+        item.view = label;
+        return item;
+    }
+    else if ([identifier isEqualTo:HBTouchBarRemainingTime])
+    {
+        NSCustomTouchBarItem *item = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
+        item.customizationLabel = NSLocalizedString(@"Remaining Time", @"Touch bar");
+
+        NSTextField *label = [NSTextField labelWithString:NSLocalizedString(@"- --:--", @"")];
+
+        item.view = label;
+        return item;
+    }
+    else if ([identifier isEqualTo:HBTouchBarTimeSlider])
+    {
+        NSSliderTouchBarItem *item = [[NSSliderTouchBarItem alloc] initWithIdentifier:identifier];
+        item.customizationLabel = NSLocalizedString(@"Slider", @"Touch bar");
+
+        item.slider.minValue = 0.0f;
+        item.slider.maxValue = 100.0f;
+        item.slider.doubleValue = 0.0f;
+        item.slider.continuous = YES;
+        item.target = self;
+        item.action = @selector(touchBarSliderChanged:);
+
+        return item;
+    }
+    return nil;
+}
+
+- (void)touchBarSliderChanged:(NSSliderTouchBarItem *)sender
+{
+    [self sliderChanged:sender.slider];
+}
+
+- (void)_touchBar_updatePlayState:(BOOL)playing
+{
+    NSButton *playButton = (NSButton *)[[self.touchBar itemForIdentifier:HBTouchBarPlayPause] view];
+
+    if (playing)
+    {
+        playButton.image = [NSImage imageNamed:NSImageNameTouchBarPauseTemplate];
+    }
+    else
+    {
+        playButton.image = [NSImage imageNamed:NSImageNameTouchBarPlayTemplate];
+    }
+}
+
+- (void)_touchBar_updateMaxDuration:(NSTimeInterval)duration
+{
+    NSSlider *slider = (NSSlider *)[[self.touchBar itemForIdentifier:HBTouchBarTimeSlider] slider];
+    slider.maxValue = duration;
+}
+
+- (NSString *)_timeToString:(NSTimeInterval)timeInSeconds negative:(BOOL)negative
+{
+    UInt16 seconds = (UInt16)fmod(timeInSeconds, 60.0);
+    UInt16 minutes = (UInt16)fmod(timeInSeconds / 60.0, 60.0);
+
+    if (negative)
+    {
+        return [NSString stringWithFormat:@"-%02d:%02d", minutes, seconds];
+    }
+    else
+    {
+        return [NSString stringWithFormat:@"%02d:%02d", minutes, seconds];
+    }
+}
+
+- (void)_touchBar_updateTime:(NSTimeInterval)currentTime duration:(NSTimeInterval)duration
+{
+    NSSlider *slider = (NSSlider *)[[self.touchBar itemForIdentifier:HBTouchBarTimeSlider] slider];
+    NSTextField *currentTimeLabel = (NSTextField *)[[self.touchBar itemForIdentifier:HBTouchBarCurrentTime] view];
+    NSTextField *remainingTimeLabel = (NSTextField *)[[self.touchBar itemForIdentifier:HBTouchBarRemainingTime] view];
+
+    slider.doubleValue = currentTime;
+    currentTimeLabel.attributedStringValue = [self _timeToString:currentTime negative:NO].HB_monospacedString;
+    remainingTimeLabel.attributedStringValue = [self _timeToString:duration - currentTime negative:YES].HB_monospacedString;
 }
 
 @end

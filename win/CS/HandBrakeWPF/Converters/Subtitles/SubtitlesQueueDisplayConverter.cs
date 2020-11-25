@@ -12,8 +12,11 @@ namespace HandBrakeWPF.Converters.Subtitles
     using System;
     using System.Collections.ObjectModel;
     using System.Globalization;
+    using System.Linq;
     using System.Text;
     using System.Windows.Data;
+
+    using HandBrakeWPF.Properties;
 
     using SubtitleTrack = HandBrakeWPF.Services.Encode.Model.Models.SubtitleTrack;
 
@@ -41,6 +44,26 @@ namespace HandBrakeWPF.Converters.Subtitles
                                       ? track.SourceTrack.ToString()
                                       : (track.SrtFileName + ".srt");
 
+                    if (!string.IsNullOrEmpty(track.SrtFileName))
+                    {
+                        text += string.Format(", {0}", track.SrtCharCode);
+                    }
+
+                    if (track.Burned)
+                    {
+                        text = text + string.Format(", {0}", Resources.SummaryView_Burned);
+                    }
+
+                    if (track.Forced)
+                    {
+                        text = text + string.Format(", {0}", Resources.SummaryView_Forced);
+                    }
+
+                    if (track.Default)
+                    {
+                        text = text + string.Format(", {0}", Resources.SummaryView_Default);
+                    }
+                    
                     sutitleTracks.AppendLine(text);
                 }
             }

@@ -25,7 +25,7 @@ typedef void (^HBPlayableObverser)(void);
 
 @implementation HBAVPlayerRateObserver
 
-- (void)postNotification;
+- (void)postNotification
 {
     self.block();
 }
@@ -69,12 +69,12 @@ typedef void (^HBPlayableObverser)(void);
             // The asset invokes its completion handler on an arbitrary queue when loading is complete.
             // Because we want to access our AVPlayer in our ensuing set-up, we must dispatch our handler to the main queue.
             dispatch_async(dispatch_get_main_queue(), ^(void) {
-                [self _setUpPlaybackOfAsset:_movie withKeys:assetKeysToLoadAndTest];
+                [self _setUpPlaybackOfAsset:self->_movie withKeys:assetKeysToLoadAndTest];
             });
 
         }];
     }
-    
+
     return self;
 }
 
@@ -284,7 +284,7 @@ typedef void (^HBPlayableObverser)(void);
 
 #pragma mark public methods
 
-- (void)loadPlayableValueAsynchronouslyWithCompletionHandler:(nullable void (^)(void))handler;
+- (void)loadPlayableValueAsynchronouslyWithCompletionHandler:(nullable void (^)(void))handler
 {
     if (self.isLoaded)
     {

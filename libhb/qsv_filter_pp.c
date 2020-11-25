@@ -26,15 +26,17 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 \* ********************************************************************* */
 
-#ifdef USE_QSV
+#include "handbrake/project.h"
 
-#include "hb.h"
-#include "hbffmpeg.h"
-#include "qsv_filter_pp.h"
-#include "qsv_filter.h"
-#include "qsv_libav.h"
-#include "qsv_memory.h"
+#if HB_PROJECT_FEATURE_QSV
 
+#include "handbrake/handbrake.h"
+#include "handbrake/hbffmpeg.h"
+#include "handbrake/qsv_filter_pp.h"
+#include "handbrake/qsv_filter.h"
+#include "handbrake/qsv_libav.h"
+#include "handbrake/qsv_memory.h"
+#include "handbrake/qsv_common.h"
 
 static int hb_qsv_filter_pre_init( hb_filter_object_t * filter,
                                hb_filter_init_t * init );
@@ -518,7 +520,7 @@ static void hb_qsv_filter_pre_close( hb_filter_object_t * filter ){
         qsv_filter_close(qsv,HB_QSV_VPP_USER);
 
         // closing the commong stuff
-        hb_qsv_context_clean(qsv);
+        hb_qsv_context_clean(qsv,hb_qsv_full_path_is_enabled(pv->job));
     }
     hb_cond_close(&pv->pre.frame_completed);
     hb_lock_close(&pv->pre.frame_completed_lock);
@@ -930,4 +932,4 @@ int process_filter(qsv_filter_task_t* task, void* params){
     return sts;
 }
 
-#endif // USE_QSV
+#endif // HB_PROJECT_FEATURE_QSV

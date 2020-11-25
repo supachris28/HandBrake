@@ -16,10 +16,12 @@ namespace HandBrakeWPF.Services
     using System.Reflection;
     using System.Security.Cryptography;
     using System.Threading;
-    using HandBrake.ApplicationServices.Interop;
-    using HandBrake.ApplicationServices.Utilities;
+    using HandBrake.Interop.Interop;
+    using HandBrake.Interop.Utilities;
     using HandBrakeWPF.Model;
     using HandBrakeWPF.Services.Interfaces;
+    using HandBrakeWPF.Utilities;
+
     using AppcastReader = HandBrakeWPF.Utilities.AppcastReader;
 
     /// <summary>
@@ -61,6 +63,16 @@ namespace HandBrakeWPF.Services
         /// </param>
         public void PerformStartupUpdateCheck(Action<UpdateCheckInformation> callback)
         {
+            if (UwpDetect.IsUWP())
+            {
+                return; // Disable Update checker if we are in a UWP container.
+            }
+
+            if (Portable.IsPortable() && !Portable.IsUpdateCheckEnabled())
+            {
+                return; // Disable Update Check for Portable Mode.
+            }
+
             // Make sure it's running on the calling thread
             if (this.userSettingService.GetUserSetting<bool>(UserSettingConstants.UpdateStatus))
             {
@@ -90,24 +102,19 @@ namespace HandBrakeWPF.Services
                     try
                     {
                         // Figure out which appcast we want to read.
-                        string url =
-                            VersionHelper.Is64Bit() || Environment.Is64BitOperatingSystem
-                                ? Constants.Appcast64
-                                : Constants.Appcast32;
+                        string url = Constants.Appcast64;
 
                         if (VersionHelper.IsNightly())
                         {
-                            url =
-                            VersionHelper.Is64Bit() || Environment.Is64BitOperatingSystem
-                                ? Constants.AppcastUnstable64
-                                : Constants.AppcastUnstable32;
+                            url = Constants.AppcastUnstable64;
                         }
 
-                        var currentBuild = HandBrakeUtils.Build;
+                        var currentBuild = VersionHelper.Build;
 
                         // Fetch the Appcast from our server.
                         HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
                         request.AllowAutoRedirect = false; // We will never do this.
+                        request.UserAgent = string.Format("HandBrake Win Upd {0}", VersionHelper.GetVersionShort());
                         WebResponse response = request.GetResponse();
 
                         // Parse the data with the AppcastReader
@@ -180,6 +187,7 @@ namespace HandBrakeWPF.Services
 
                        HttpWebRequest webRequest = (HttpWebRequest)WebRequest.Create(url);
                        webRequest.Credentials = CredentialCache.DefaultCredentials;
+                       webRequest.UserAgent = string.Format("HandBrake Win Upd {0}", VersionHelper.GetVersionShort());
                        HttpWebResponse webResponse = (HttpWebResponse)webRequest.GetResponse();
                        long fileSize = webResponse.ContentLength;
 

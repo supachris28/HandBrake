@@ -1,16 +1,12 @@
-//
-//  HBJob+HBJob_Private.h
-//  HandBrake
-//
-//  Created by Damiano Galassi on 29/10/16.
-//
-//
+/*  HBJob+HBJob_Private.h $
+
+ This file is part of the HandBrake source code.
+ Homepage: <http://handbrake.fr/>.
+ It may be used under the terms of the GNU General Public License. */
 
 #import <HandBrakeKit/HandBrakeKit.h>
-#import "HBSecurityAccessToken.h"
 
-@interface HBJob (Private) <HBSecurityScope>
-@end
+NS_ASSUME_NONNULL_BEGIN
 
 @interface HBVideo (Private)
 
@@ -48,7 +44,7 @@
 
 @end
 
-@interface HBSubtitles (Private) <HBSecurityScope>
+@interface HBSubtitles (Private)
 
 - (instancetype)initWithJob:(HBJob *)job;
 
@@ -70,4 +66,6 @@
 - (void)applyPreset:(HBPreset *)preset jobSettings:(NSDictionary *)settings;
 
 @end
+
+NS_ASSUME_NONNULL_END
 

@@ -1,13 +1,12 @@
 /*
  * values.h
- * Copyright (C) John Stebbins 2008-2017 <stebbins@stebbins>
+ * Copyright (C) John Stebbins 2008-2020 <stebbins@stebbins>
  *
  * values.h is free software.
  *
  * You may redistribute it and/or modify it under the terms of the
- * GNU General Public License, as published by the Free Software
- * Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * GNU General Public License version 2, as published by the Free Software
+ * Foundation.
  *
  * values.h is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -26,7 +25,7 @@
 
 #include <glib.h>
 #include <glib-object.h>
-#include "hb_dict.h"
+#include "handbrake/hb_dict.h"
 
 #define GHB_DICT    HB_VALUE_TYPE_DICT
 #define GHB_ARRAY   HB_VALUE_TYPE_ARRAY

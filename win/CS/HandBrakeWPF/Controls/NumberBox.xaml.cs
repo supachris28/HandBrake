@@ -49,13 +49,13 @@ namespace HandBrakeWPF.Controls
         /// The maximum property.
         /// </summary>
         public static readonly DependencyProperty MaximumProperty = DependencyProperty.Register(
-            MaximumPropertyName, typeof(double), typeof(NumberBox), new UIPropertyMetadata(double.MaxValue));
+            MaximumPropertyName, typeof(double?), typeof(NumberBox), new UIPropertyMetadata(double.MaxValue));
 
         /// <summary>
         /// The minimum property.
         /// </summary>
         public static readonly DependencyProperty MinimumProperty = DependencyProperty.Register(
-            MinimumPropertyName, typeof(double), typeof(NumberBox), new UIPropertyMetadata(double.MinValue));
+            MinimumPropertyName, typeof(double?), typeof(NumberBox), new UIPropertyMetadata(double.MinValue));
 
         /// <summary>
         /// The modulus property.
@@ -67,7 +67,7 @@ namespace HandBrakeWPF.Controls
         /// The number property.
         /// </summary>
         public static readonly DependencyProperty NumberProperty = DependencyProperty.Register(
-            "Number", typeof(double), typeof(NumberBox), new PropertyMetadata(OnNumberChanged));
+            "Number", typeof(double?), typeof(NumberBox), new PropertyMetadata(OnNumberChanged));
 
         /// <summary>
         /// The select all threshold.
@@ -108,7 +108,7 @@ namespace HandBrakeWPF.Controls
         /// </summary>
         public NumberBox()
         {
-            this.noneCaption = "(none)";
+            this.noneCaption = string.Empty;
             this.UpdateBindingOnTextChange = true;
             this.ShowIncrementButtons = true;
             this.SelectAllOnClick = true;
@@ -141,11 +141,11 @@ namespace HandBrakeWPF.Controls
         /// <summary>
         /// Gets or sets the maximum.
         /// </summary>
-        public double Maximum
+        public double? Maximum
         {
             get
             {
-                return (double)this.GetValue(MaximumProperty);
+                return (double?)this.GetValue(MaximumProperty);
             }
             set
             {
@@ -156,11 +156,11 @@ namespace HandBrakeWPF.Controls
         /// <summary>
         /// Gets or sets the minimum.
         /// </summary>
-        public double Minimum
+        public double? Minimum
         {
             get
             {
-                return (double)this.GetValue(MinimumProperty);
+                return (double?)this.GetValue(MinimumProperty);
             }
             set
             {
@@ -203,11 +203,11 @@ namespace HandBrakeWPF.Controls
         /// <summary>
         /// Gets or sets the number.
         /// </summary>
-        public double Number
+        public double? Number
         {
             get
             {
-                return (double)this.GetValue(NumberProperty);
+                return (double?)this.GetValue(NumberProperty);
             }
 
             set
@@ -293,19 +293,31 @@ namespace HandBrakeWPF.Controls
         /// </summary>
         private void DecrementNumber()
         {
+            if (!this.Number.HasValue)
+            {
+                this.Number = 0; // Default to 0
+            }
+
             double newNumber;
             if (this.AllowEmpty && this.Number == 0)
             {
-                newNumber = Math.Min(this.Maximum, -this.Increment);
+                if (this.Maximum.HasValue)
+                {
+                    newNumber = Math.Min(this.Maximum.Value, -this.Increment);
+                }
+                else
+                {
+                    newNumber = -this.Increment;
+                }
             }
             else
             {
-                newNumber = this.Number - this.Increment;
+                newNumber = this.Number.Value - this.Increment;
             }
 
-            if (newNumber < this.Minimum)
+            if (this.Minimum.HasValue && newNumber < this.Minimum)
             {
-                newNumber = this.Minimum;
+                newNumber = this.Minimum.Value;
             }
 
             if (newNumber != this.Number)
@@ -340,7 +352,7 @@ namespace HandBrakeWPF.Controls
         /// </param>
         private void DownButtonMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            this.refireControl.Stop();
+            this.refireControl?.Stop();
         }
 
         /// <summary>
@@ -372,19 +384,31 @@ namespace HandBrakeWPF.Controls
         /// </summary>
         private void IncrementNumber()
         {
+            if (!this.Number.HasValue)
+            {
+                this.Number = 0; // Default to 0
+            }
+
             double newNumber;
             if (this.AllowEmpty && this.Number == 0)
             {
-                newNumber = Math.Max(this.Minimum, this.Increment);
+                if (this.Maximum.HasValue)
+                {
+                    newNumber = Math.Max(this.Minimum.Value, this.Increment);
+                }
+                else
+                {
+                    newNumber = this.Increment;
+                }
             }
             else
             {
-                newNumber = this.Number + this.Increment;
+                newNumber = this.Number.Value + this.Increment;
             }
 
-            if (newNumber > this.Maximum)
+            if (this.Maximum.HasValue && newNumber > this.Maximum)
             {
-                newNumber = this.Maximum;
+                newNumber = this.Maximum.Value;
             }
 
             if (newNumber != this.Number)
@@ -455,6 +479,15 @@ namespace HandBrakeWPF.Controls
             if (e.Key == Key.Space)
             {
                 e.Handled = true;
+            }
+
+            if (e.Key == Key.Up)
+            {
+                this.IncrementNumber();
+            }
+            else if (e.Key == Key.Down)
+            {
+                this.DecrementNumber();
             }
         }
 
@@ -554,13 +587,18 @@ namespace HandBrakeWPF.Controls
         /// </summary>
         private void RefreshNumberBox()
         {
+            if (!this.Number.HasValue)
+            {
+                return;
+            }
+
             if (this.AllowEmpty && this.Number == 0)
             {
                 this.numberBox.Text = this.hasFocus ? string.Empty : this.NoneCaption;
             }
             else
             {
-                this.numberBox.Text = this.Number.ToString(CultureInfo.InvariantCulture);
+                this.numberBox.Text = this.Number.Value.ToString(CultureInfo.InvariantCulture);
             }
 
             this.RefreshNumberBoxColor();
@@ -607,7 +645,7 @@ namespace HandBrakeWPF.Controls
         /// </param>
         private void UpButtonMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            this.refireControl.Stop();
+            this.refireControl?.Stop();
         }
 
         /// <summary>

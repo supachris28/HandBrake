@@ -3,7 +3,7 @@
 //   This file is part of the HandBrake source code - It may be used under the terms of the GNU General Public License.
 // </copyright>
 // <summary>
-//   Encode Progess Status
+//   Encode Progress Status
 // </summary>
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -12,14 +12,12 @@ namespace HandBrakeWPF.Services.Scan.Interfaces
     using System;
     using System.Windows.Media.Imaging;
 
-    using HandBrake.ApplicationServices.Model;
-
     using HandBrakeWPF.Services.Encode.Model;
     using HandBrakeWPF.Services.Scan.EventArgs;
     using HandBrakeWPF.Services.Scan.Model;
 
     /// <summary>
-    /// Encode Progess Status
+    /// Encode Progress Status
     /// </summary>
     /// <param name="sender">
     /// The sender.
@@ -30,7 +28,7 @@ namespace HandBrakeWPF.Services.Scan.Interfaces
     public delegate void ScanProgessStatus(object sender, ScanProgressEventArgs e);
 
     /// <summary>
-    /// Encode Progess Status
+    /// Encode Progress Status
     /// </summary>
     /// <param name="sender">
     /// The sender.
@@ -43,7 +41,7 @@ namespace HandBrakeWPF.Services.Scan.Interfaces
     /// <summary>
     /// The IScan Interface
     /// </summary>
-    public interface IScan
+    public interface IScan : IDisposable
     {
         /// <summary>
         /// Scan has Started
@@ -78,10 +76,7 @@ namespace HandBrakeWPF.Services.Scan.Interfaces
         /// <param name="postAction">
         /// The post Action.
         /// </param>
-        /// <param name="configuration">
-        /// The configuraiton.
-        /// </param>
-        void Scan(string sourcePath, int title, Action<bool, Source> postAction, HBConfiguration configuration);
+        void Scan(string sourcePath, int title, Action<bool, Source> postAction);
 
         /// <summary>
         /// Cancel the current scan.
@@ -97,13 +92,10 @@ namespace HandBrakeWPF.Services.Scan.Interfaces
         /// <param name="preview">
         /// The preview.
         /// </param>
-        /// <param name="configuration">
-        /// The configuration.
-        /// </param>
         /// <returns>
         /// The <see cref="BitmapImage"/>.
         /// </returns>
-        BitmapImage GetPreview(EncodeTask task, int preview, HBConfiguration configuration);
+        BitmapImage GetPreview(EncodeTask task, int preview);
 
         /// <summary>
         /// Kill the scan

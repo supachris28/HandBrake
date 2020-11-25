@@ -6,17 +6,33 @@
 
 #import "HBPicture+UIAdditions.h"
 #import "HBTitle.h"
-#include "hb.h"
+#import "HBLocalizationUtilities.h"
+
+#include "handbrake/handbrake.h"
 
 @implementation HBPicture (UIAdditions)
 
-@dynamic maxHeight;
-@dynamic maxWidth;
+@dynamic maxTopCrop;
+@dynamic maxBottomCrop;
+@dynamic maxLeftCrop;
+@dynamic maxRightCrop;
 
-@dynamic maxHorizontalCrop;
-@dynamic maxVerticalCrop;
+@dynamic maxTopPadding;
+@dynamic maxBottomPadding;
+@dynamic maxLeftPadding;
+@dynamic maxRightPadding;
 
 #pragma mark - Editable state
+
++ (NSSet<NSString *> *)keyPathsForValuesAffectingCustomResolutionLimitEnabled
+{
+    return [NSSet setWithObjects:@"resolutionLimitMode", nil];
+}
+
+- (BOOL)isCustomResolutionLimitEnabled
+{
+    return self.resolutionLimitMode == HBPictureResolutionLimitModeCustom;
+}
 
 + (NSSet<NSString *> *)keyPathsForValuesAffectingKeepDisplayAspectEditable
 {
@@ -25,8 +41,8 @@
 
 - (BOOL)isKeepDisplayAspectEditable
 {
-    if (self.anamorphicMode == HB_ANAMORPHIC_AUTO ||
-        self.anamorphicMode == HB_ANAMORPHIC_LOOSE)
+    if (self.anamorphicMode == HBPictureAnarmophicModeAuto ||
+        self.anamorphicMode == HBPictureAnarmophicModeLoose)
     {
         return NO;
     }
@@ -46,6 +62,26 @@
     return self.anamorphicMode == HB_ANAMORPHIC_CUSTOM;
 }
 
++ (NSSet<NSString *> *)keyPathsForValuesAffectingCustomPaddingEnabled
+{
+    return [NSSet setWithObjects:@"paddingMode", nil];
+}
+
+- (BOOL)isCustomPaddingEnabled
+{
+    return self.paddingMode == HBPicturePaddingModeCustom;
+}
+
++ (NSSet<NSString *> *)keyPathsForValuesAffectingCustomPaddingColorEnabled
+{
+    return [NSSet setWithObjects:@"paddingColorMode", nil];
+}
+
+- (BOOL)isCustomPaddingColorEnabled
+{
+    return self.paddingColorMode == HBPicturePaddingColorModeCustom;
+}
+
 + (NSSet<NSString *> *)keyPathsForValuesAffectingInfo
 {
     return [NSSet setWithObjects:@"parWidth", @"parHeight", @"displayWidth", @"width", @"height",@"anamorphicMode", @"cropTop", @"cropBottom", @"cropLeft", @"cropRight", nil];
@@ -55,64 +91,54 @@
 {
     NSString *sizeInfo = @"";
 
-    sizeInfo = [NSString stringWithFormat:
-                @"Source: %dx%d, ",
+    sizeInfo = [NSString stringWithFormat:HBKitLocalizedString
+                (@"Source: %dx%d, ", @"HBPicture -> short info"),
                 self.sourceWidth, self.sourceHeight];
 
     if (self.anamorphicMode == HB_ANAMORPHIC_AUTO)
     {
-        sizeInfo = [NSString stringWithFormat:
-                    @"%@Output: %dx%d, Anamorphic: %dx%d Auto",
+        sizeInfo = [NSString stringWithFormat:HBKitLocalizedString
+                    (@"%@Output: %dx%d, Anamorphic: %dx%d Auto", @"HBPicture -> short info"),
                     sizeInfo, self.width, self.height, self.displayWidth, self.height];
     }
     else if (self.anamorphicMode == HB_ANAMORPHIC_LOOSE) // Loose Anamorphic
     {
-        sizeInfo = [NSString stringWithFormat:
-                    @"%@Output: %dx%d, Anamorphic: %dx%d Loose",
+        sizeInfo = [NSString stringWithFormat:HBKitLocalizedString
+                    (@"%@Output: %dx%d, Anamorphic: %dx%d Loose", @"HBPicture -> short info"),
                     sizeInfo, self.width, self.height, self.displayWidth, self.height];
     }
     else if (self.anamorphicMode == HB_ANAMORPHIC_CUSTOM) // Custom Anamorphic
     {
-        sizeInfo = [NSString stringWithFormat:
-                    @"%@Output: %dx%d, Anamorphic: %dx%d Custom",
+        sizeInfo = [NSString stringWithFormat:HBKitLocalizedString
+                    (@"%@Output: %dx%d, Anamorphic: %dx%d Custom", @"HBPicture -> short info"),
                     sizeInfo, self.width, self.height, self.displayWidth, self.height];
     }
     else // No Anamorphic
     {
-        sizeInfo = [NSString stringWithFormat:
-                    @"%@Output: %dx%d",
+        sizeInfo = [NSString stringWithFormat:HBKitLocalizedString
+                    (@"%@Output: %dx%d", @"HBPicture -> short info"),
                     sizeInfo, self.width, self.height];
     }
 
     return sizeInfo;
 }
 
-- (NSString *)sourceInfo
+- (NSString *)shortInfo
 {
-    NSString *sizeInfo = @"";
-
-    sizeInfo = [NSString stringWithFormat:@"%d x %d",  self.sourceWidth, self.sourceHeight];
-
-    if (self.sourceWidth != self.sourceDisplayWidth)
-    {
-        sizeInfo = [NSString stringWithFormat:@"%d x %d, Anamorphic: %d x %d", self.sourceWidth, self.sourceHeight, self.sourceDisplayWidth, self.sourceHeight];
-    }
-
-    return sizeInfo;
+    return [NSString stringWithFormat:HBKitLocalizedString(@"%dx%d Storage, %dx%d Display", @"HBPicture -> short info"), self.width, self.height, self.displayWidth, self.height];
 }
 
 + (NSSet<NSString *> *)keyPathsForValuesAffectingSummary
 {
-    return [NSSet setWithObjects:@"parWidth", @"parHeight", @"displayWidth", @"width", @"height",@"anamorphicMode", @"cropTop", @"cropBottom", @"cropLeft", @"cropRight", nil];
+    return [NSSet setWithObjects:@"parWidth", @"parHeight", @"displayWidth", @"width", @"height",@"anamorphicMode", @"cropTop", @"cropBottom", @"cropLeft", @"cropRight", @"paddingTop", @"paddingBottom", @"paddingLeft", @"paddingRight", nil];
 }
 
 - (NSString *)summary
 {
     NSMutableString *summary = [NSMutableString stringWithString:@""];
     [summary appendString:self.info];
-    [summary appendFormat:@", Modulus: %d", self.modulus];
-    [summary appendFormat:@", Crop: %s %d/%d/%d/%d",
-     self.autocrop ? "Auto" : "Custom",
+    [summary appendFormat:HBKitLocalizedString(@", Crop: %@ %d/%d/%d/%d", @"HBPicture -> summary"),
+     self.autocrop ? HBKitLocalizedString(@"Auto", @"HBPicture -> summary") : HBKitLocalizedString(@"Custom", @"HBPicture -> summary"),
      self.cropTop, self.cropBottom,
      self.cropLeft, self.cropRight];
 

@@ -6,14 +6,22 @@
 //
 
 #import "HBPreviewGenerator.h"
+#import "HBPreferencesKeys.h"
+#import "HBJob+HBAdditions.h"
 
 @import HandBrakeKit;
 
 @interface HBPreviewGenerator ()
 
-@property (nonatomic, readonly) NSCache *picturePreviews;
 @property (nonatomic, readonly, weak) HBCore *scanCore;
 @property (nonatomic, readonly, strong) HBJob *job;
+
+@property (nonatomic, readonly) NSCache<NSNumber *, id> *previewsCache;
+@property (nonatomic, readonly) NSCache<NSNumber *, id> *smallPreviewsCache;
+
+@property (nonatomic, readonly) dispatch_queue_t queue;
+@property (nonatomic, readonly) dispatch_group_t group;
+@property (nonatomic, readonly) _Atomic bool invalidated;
 
 @property (nonatomic, strong) HBCore *core;
 
@@ -36,11 +44,17 @@
         _scanCore = core;
         _job = job;
 
-        _picturePreviews = [[NSCache alloc] init];
+        _previewsCache = [[NSCache alloc] init];
         // Limit the cache to 60 1080p previews, the cost is in pixels
-        _picturePreviews.totalCostLimit = 60 * 1920 * 1080;
+        _previewsCache.totalCostLimit = 60 * 1920 * 1080;
+
+        _smallPreviewsCache = [[NSCache alloc] init];
+        _smallPreviewsCache.totalCostLimit = 60 * 320 * 180;
 
         _imagesCount = [_scanCore imagesCountForTitle:self.job.title];
+
+        _queue = dispatch_queue_create("fr.handbrake.PreviewQueue", DISPATCH_QUEUE_SERIAL);
+        _group = dispatch_group_create();
 
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(imagesSettingsDidChange) name:HBPictureChangedNotification object:job.picture];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(imagesSettingsDidChange) name:HBFiltersChangedNotification object:job.filters];
@@ -50,6 +64,8 @@
 
 - (void)dealloc
 {
+    _invalidated = true;
+
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [[NSRunLoop mainRunLoop] cancelPerformSelectorsWithTarget:self];
     [self.core cancelEncode];
@@ -66,11 +82,13 @@
 - (CGImageRef) copyImageAtIndex: (NSUInteger) index shouldCache: (BOOL) cache
 {
     if (index >= self.imagesCount)
+    {
         return nil;
+    }
 
     // The preview for the specified index may not currently exist, so this method
     // generates it if necessary.
-    CGImageRef theImage = (__bridge CGImageRef)([self.picturePreviews objectForKey:@(index)]);
+    CGImageRef theImage = (__bridge CGImageRef)([_previewsCache objectForKey:@(index)]);
 
     if (!theImage)
     {
@@ -80,14 +98,12 @@
         theImage = (CGImageRef)[self.scanCore copyImageAtIndex:index
                                                            forTitle:self.job.title
                                                        pictureFrame:self.job.picture
-                                                        deinterlace:deinterlace
-                                                        rotate:self.job.filters.rotate
-                                                       flipped:self.job.filters.flip];
+                                                        deinterlace:deinterlace];
         if (cache && theImage)
         {
             // The cost is the number of pixels of the image
             NSUInteger previewCost = CGImageGetWidth(theImage) * CGImageGetHeight(theImage);
-            [self.picturePreviews setObject:(__bridge id)(theImage) forKey:@(index) cost:previewCost];
+            [self.previewsCache setObject:(__bridge id)(theImage) forKey:@(index) cost:previewCost];
         }
     }
     else
@@ -104,7 +120,7 @@
  */
 - (void) purgeImageCache
 {
-    [self.picturePreviews removeAllObjects];
+    [self.previewsCache removeAllObjects];
 }
 
 - (CGSize)imageSize
@@ -112,13 +128,13 @@
     return CGSizeMake(self.job.picture.displayWidth, self.job.picture.height);
 }
 
-- (void) imagesSettingsDidChange
+- (void)imagesSettingsDidChange
 {
     // Purge the existing picture previews so they get recreated the next time
     // they are needed.
     [self purgeImageCache];
 
-    // Enquee the reload call on the main runloop
+    // Enqueue the reload call on the main runloop
     // to avoid reloading the same image multiple times.
     if (self.reloadInQueue == NO)
     {
@@ -138,12 +154,67 @@
     return self.job.picture.info;
 }
 
+#pragma mark - Small previews
+
+- (void)copySmallImageAtIndex:(NSUInteger)index completionHandler:(void (^)(__nullable CGImageRef result))handler
+{
+    if (_invalidated || index >= self.imagesCount)
+    {
+        handler(NULL);
+        return;
+    }
+
+    dispatch_group_async(_group, _queue,^{
+
+        if (self->_invalidated || index >= self.imagesCount)
+        {
+            handler(NULL);
+            return;
+        }
+
+        CGImageRef image;
+
+        // First try to look in the small previews cache
+        image = (__bridge CGImageRef)([self->_smallPreviewsCache objectForKey:@(index)]);
+
+        if (image != NULL)
+        {
+            handler(image);
+            return;
+        }
+
+        // Else try the normal cache
+        image = (__bridge CGImageRef)([self->_previewsCache objectForKey:@(index)]);
+
+        if (image == NULL)
+        {
+            image = (CGImageRef)[self.scanCore copyImageAtIndex:index
+                                                       forTitle:self.job.title
+                                                   pictureFrame:self.job.picture
+                                                    deinterlace:NO];
+            CFAutorelease(image);
+        }
+
+        if (image != NULL)
+        {
+            CGImageRef scaledImage = CreateScaledCGImageFromCGImage(image, 30);
+            // The cost is the number of pixels of the image
+            NSUInteger previewCost = CGImageGetWidth(scaledImage) * CGImageGetHeight(scaledImage);
+            [self.smallPreviewsCache setObject:(__bridge id)(scaledImage) forKey:@(index) cost:previewCost];
+            handler(scaledImage);
+            return;
+        }
+
+        handler(NULL);
+    });
+}
+
 #pragma mark -
 #pragma mark Preview movie
 
 + (NSURL *) generateFileURLForType:(NSString *) type
 {
-    NSURL *previewDirectory =  [[HBUtilities appSupportURL] URLByAppendingPathComponent:[NSString stringWithFormat:@"/Previews/%d", getpid()] isDirectory:YES];
+    NSURL *previewDirectory = [[HBUtilities appSupportURL] URLByAppendingPathComponent:[NSString stringWithFormat:@"/Previews/%d", getpid()] isDirectory:YES];
 
     if (![[NSFileManager defaultManager] createDirectoryAtPath:previewDirectory.path
                                   withIntermediateDirectories:YES
@@ -163,7 +234,7 @@
  * @param index picture index in title.
  * @param duration the duration in seconds of the preview movie.
  */
-- (BOOL) createMovieAsyncWithImageAtIndex: (NSUInteger) index duration: (NSUInteger) seconds;
+- (BOOL) createMovieAsyncWithImageAtIndex: (NSUInteger) index duration: (NSUInteger) seconds
 {
     // return if an encoding if already started.
     if (self.core || index >= self.imagesCount)
@@ -171,17 +242,9 @@
         return NO;
     }
 
-    NSURL *destURL = nil;
     // Generate the file url and directories.
-    if (self.job.container & 0x030000 /*HB_MUX_MASK_MP4*/)
-    {
-        // we use .m4v for our mp4 files so that ac3 and chapters in mp4 will play properly.
-        destURL = [HBPreviewGenerator generateFileURLForType:@"m4v"];
-    }
-    else if (self.job.container & 0x300000 /*HB_MUX_MASK_MKV*/)
-    {
-        destURL = [HBPreviewGenerator generateFileURLForType:@"mkv"];
-    }
+    NSString *extension = self.job.automaticExt;
+    NSURL *destURL = [HBPreviewGenerator generateFileURLForType:extension];
 
     // return if we couldn't get the fileURL.
     if (!destURL)
@@ -207,13 +270,13 @@
     job.video.twoPass = NO;
 
     // Init the libhb core
-    int level = [[[NSUserDefaults standardUserDefaults] objectForKey:@"LoggingLevel"] intValue];
+    NSInteger level = [NSUserDefaults.standardUserDefaults integerForKey:HBLoggingLevel];
     self.core = [[HBCore alloc] initWithLogLevel:level name:@"PreviewCore"];
 
     HBStateFormatter *formatter = [[HBStateFormatter alloc] init];
     formatter.twoLines = NO;
     formatter.showPassNumber = NO;
-    formatter.title = NSLocalizedString(@"preview", nil);
+    formatter.title = NSLocalizedString(@"preview", @"Preview -> progress formatter title");
 
     self.core.stateFormatter = formatter;
 
@@ -242,12 +305,18 @@
 /**
  * Cancels the encoding process
  */
-- (void) cancel
+- (void)cancel
 {
     if (self.core.state == HBStateWorking || self.core.state == HBStatePaused)
     {
         [self.core cancelEncode];
     }
+}
+
+- (void)invalidate
+{
+    _invalidated = true;
+    dispatch_group_wait(_group, DISPATCH_TIME_FOREVER);
 }
 
 @end

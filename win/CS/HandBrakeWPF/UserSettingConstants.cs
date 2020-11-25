@@ -14,218 +14,69 @@ namespace HandBrakeWPF
     /// </summary>
     public class UserSettingConstants
     {
-        #region Constants and Fields
-
-        /// <summary>
-        /// Auto name format
-        /// </summary>
         public const string AutoNameFormat = "autoNameFormat";
-
-        /// <summary>
-        /// Autoname path
-        /// </summary>
         public const string AutoNamePath = "autoNamePath";
-
-        /// <summary>
-        /// Auto Name Remove underscore
-        /// </summary>
         public const string AutoNameRemoveUnderscore = "AutoNameRemoveUnderscore";
-
-        /// <summary>
-        /// Auto Name Title Case
-        /// </summary>
         public const string AutoNameTitleCase = "AutoNameTitleCase";
-
-        /// <summary>
-        /// Auto Naming
-        /// </summary>
         public const string AutoNaming = "autoNaming";
-
-        /// <summary>
-        /// Clear old logs
-        /// </summary>
         public const string ClearOldLogs = "clearOldLogs";
-
-        /// <summary>
-        /// Update check interval
-        /// </summary>
         public const string DaysBetweenUpdateCheck = "daysBetweenUpdateCheck";
-
-        /// <summary>
-        /// Use Default Player
-        /// </summary>
         public const string DefaultPlayer = "defaultPlayer";
-
-        /// <summary>
-        /// Last Update Check
-        /// </summary>
         public const string LastUpdateCheckDate = "lastUpdateCheckDate";
-
-        /// <summary>
-        /// Main Window Minimise
-        /// </summary>
         public const string MainWindowMinimize = "MainWindowMinimize";
-
-        /// <summary>
-        /// Min Title Length
-        /// </summary>
-        public const string MinTitleLength = "MinTitleLength";
-
-        /// <summary>
-        /// Update Status
-        /// </summary>
         public const string UpdateStatus = "updateStatus";
-
-        /// <summary>
-        /// Use m4v
-        /// </summary>
         public const string UseM4v = "useM4v";
-
-        /// <summary>
-        /// Vlc Path
-        /// </summary>
-        public const string VLCPath = "VLC_Path";
-
-        /// <summary>
-        /// The Instance Id
-        /// </summary>
+        public const string MediaPlayerPath = "VLC_Path";
         public const string InstanceId = "InstanceId";
-
-        /// <summary>
-        /// The X264 Stepper 
-        /// </summary>
         public const string X264Step = "X264Step";
-
-        /// <summary>
-        /// The show advanced tab.
-        /// </summary>
-        public const string ShowAdvancedTab = "ShowAdvancedTab";
-
-        /// <summary>
-        /// The last preview duration
-        /// </summary>
         public const string LastPreviewDuration = "LastPreviewDuration";
-    
-        /// <summary>
-        /// When Complete Action
-        /// </summary>
-        public const string WhenCompleteAction = "WhenCompleteAction";
-
-        /// <summary>
-        /// Send file enabled.
-        /// </summary>
+        public const string WhenCompleteAction = "WhenCompletePerformAction";
         public const string SendFile = "SendFile";
-
-        /// <summary>
-        /// Send file to application path
-        /// </summary>
         public const string SendFileTo = "SendFileTo";
-
-        /// <summary>
-        /// Send file to arguments
-        /// </summary>
         public const string SendFileToArgs = "SendFileToArgs";
-
-        /// <summary>
-        /// Prevent Sleep
-        /// </summary>
         public const string PreventSleep = "PreventSleep";
-
-        /// <summary>
-        /// Pause Queue on Low Disk Space
-        /// </summary>
         public const string PauseOnLowDiskspace = "PauseOnLowDiskspace";
-
-        /// <summary>
-        /// Low Disk Space Warning Level in Bytes.
-        /// </summary>
-        public const string PauseOnLowDiskspaceLevel = "LowDiskSpaceWarningLevelInBytes";
-
-        /// <summary>
-        /// The remove punctuation.
-        /// </summary>
+        public const string PauseQueueOnLowDiskspaceLevel = "LowDiskSpaceWarningLevelInBytes";
         public const string RemovePunctuation = "RemovePunctuation";
-
-        /// <summary>
-        /// The Show Preset Panel
-        /// </summary>
-        public const string ShowPresetPanel = "ShowPresetPanel";
-
-        /// <summary>
-        /// The reset when done action.
-        /// </summary>
         public const string ResetWhenDoneAction = "ResetWhenDoneAction";
-
-        /// <summary>
-        /// The disable lib dvd nav.
-        /// </summary>
         public const string DisableLibDvdNav = "DisableLibDvdNav";
-
-        /// <summary>
-        /// The disable quick sync decoding.
-        /// </summary>
-        public const string DisableQuickSyncDecoding = "DisableQuickSyncDecoding";
-
-        /// <summary>
-        /// Setting indicating whether to use qsv decode for non qsv encoders
-        /// </summary>
+        public const string EnableQuickSyncDecoding = "EnableQuickSyncDecoding";
         public const string UseQSVDecodeForNonQSVEnc = "UseQSVDecodeForNonQSVEnc";
-
-        /// <summary>
-        /// The scaling mode.
-        /// </summary>
         public const string ScalingMode = "ScalingMode";
-
-        /// <summary>
-        /// Preview Scan Count
-        /// </summary>
         public const string PreviewScanCount = "previewScanCount";
-
-        /// <summary>
-        /// The Verbosity
-        /// </summary>
         public const string Verbosity = "Verbosity";
-
-        /// <summary>
-        /// Min Title Scan Duration
-        /// </summary>
         public const string MinScanDuration = "MinTitleScanDuration";
-
-        /// <summary>
-        /// Process Priority
-        /// </summary>
-        public const string ProcessPriority = "ProcessPriority";
-
-        /// <summary>
-        /// Save Log Directory
-        /// </summary>
+        public const string ProcessPriorityInt = "ProcessPriorityInt";
         public const string SaveLogToCopyDirectory = "SaveLogToCopyDirectory";
-
-        /// <summary>
-        /// Save log with video
-        /// </summary>
         public const string SaveLogWithVideo = "SaveLogWithVideo";
-
-        /// <summary>
-        /// Save copy of the log to a directory
-        /// </summary>
         public const string SaveLogCopyDirectory = "SaveLogCopyDirectory";
-
-        /// <summary>
-        /// The clear completed from queue.
-        /// </summary>
         public const string ClearCompletedFromQueue = "ClearCompletedFromQueue";
-
-        /// <summary>
-        /// The Show Queue in-line option.
-        /// </summary>
-        public const string ShowQueueInline = "ShowQueueInline";
-
-        /// <summary>
-        /// Setting to allow mid-version upgrades of presets.
-        /// </summary>
         public const string ForcePresetReset = "ForcePresetReset";
-
-        #endregion
+        public const string PresetExpandedStateList = "PresetExpandedStateList";
+        public const string ShowStatusInTitleBar = "ShowStatusInTitleBar";
+        public const string ShowPreviewOnSummaryTab = "ShowPreviewOnSummaryTab";
+        public const string PlaySoundWhenDone = "PlaySoundWhenDone";
+        public const string PlaySoundWhenQueueDone = "PlaySoundWhenQueueDone";
+        public const string WhenDoneAudioFile = "WhenDoneAudioFile";
+        public const string ProcessIsolationEnabled = "ProcessIsolationEnabled";
+        public const string ProcessIsolationPort = "ProcessIsolationPort";
+        public const string EnableQuickSyncEncoding = "EnableQuickSyncEncoding";
+        public const string EnableVceEncoder = "EnableVceEncoder";
+        public const string EnableNvencEncoder = "EnableNvencEncoder";
+        public const string UiLanguage = "UiLanguage";
+        public const string ShowAddAllToQueue = "ShowAddAllToQueue";
+        public const string ShowAddSelectionToQueue = "ShowAddSelectionToQueue";
+        public const string FileOverwriteBehaviour = "FileOverwriteBehaviour";
+        public const string AutonameFileCollisionBehaviour = "AutonameFileCollisionBehaviour";
+        public const string AutonameFilePrePostString = "AutonameFilePrePostString";
+        public const string WhenDonePerformActionImmediately = "WhenDonePerformActionImmediately";
+        public const string UseDarkTheme = "UseDarkTheme";
+        public const string PreviewRotationFlip = "PreviewRotationFlip";
+        public const string AlwaysUseDefaultPath = "AlwaysUseDefaultPath";
+        public const string PauseEncodingOnLowBattery = "PauseEncodingOnLowBattery";
+        public const string LowBatteryLevel = "LowBatteryLevel";
+        public const string EnableQuickSyncLowPower = "EnableQuickSyncLowPower";
+        public const string SimultaneousEncodes = "SimultaneousEncodes";
+        public const string MetadataPassthru = "MetadataPassthru";
     }
 }

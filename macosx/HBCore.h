@@ -38,7 +38,7 @@ typedef NS_ENUM(NSUInteger, HBState) {
 // These constants specify the result of a scan or encode.
 typedef NS_ENUM(NSUInteger, HBCoreResult) {
     HBCoreResultDone,
-    HBCoreResultCancelled,
+    HBCoreResultCanceled,
     HBCoreResultFailed,
 };
 
@@ -49,6 +49,13 @@ typedef void (^HBCoreCompletionHandler)(HBCoreResult result);
  * HBCore is an Objective-C interface to the low-level HandBrake library.
  * HBCore monitors state changes of libhb. It can also be used
  * to implement properties that can be directly bound to elements of the gui.
+ *
+ * Instance methods must be called on the same queue as the queue
+ * passed to initWithLogLevel:queue:
+ * Convenience inits use the main queue by default.
+ *
+ * copyImageAtIndex: can be called on a different queue,
+ * but the caller must ensure the validity of the title.
  */
 @interface HBCore : NSObject
 
@@ -84,7 +91,7 @@ typedef void (^HBCoreCompletionHandler)(HBCoreResult result);
  * @param level         the desired libhb logging level.
  * @param queue         the queue on which the callbacks will be called.
  */
-- (instancetype)initWithLogLevel:(int)level queue:(dispatch_queue_t)queue NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithLogLevel:(NSInteger)level queue:(dispatch_queue_t)queue NS_DESIGNATED_INITIALIZER;
 
 /**
  *  Opens low level HandBrake library. This should be called once before other
@@ -93,12 +100,12 @@ typedef void (^HBCoreCompletionHandler)(HBCoreResult result);
  *  @param level the desired libhb logging level
  *  @param name  the instance debug name
  */
-- (instancetype)initWithLogLevel:(int)level name:(NSString *)name;
+- (instancetype)initWithLogLevel:(NSInteger)level name:(NSString *)name;
 
 /**
  *  Log level.
  */
-@property (nonatomic, readwrite) int logLevel;
+@property (nonatomic, readwrite) NSInteger logLevel;
 
 /**
  * Set whether system sleep will be disable or not during a scan/encode
@@ -132,7 +139,7 @@ typedef void (^HBCoreCompletionHandler)(HBCoreResult result);
 @property (nonatomic, copy) NSString *name;
 
 /**
- *  Determines whether the scan operation can scan a particural URL or whether an additional decryption lib is needed.
+ *  Determines whether the scan operation can scan a particular URL or whether an additional decryption lib is needed.
  *
  *  @param url   the URL of the input file.
  *  @param error an error containing additional info.
@@ -148,10 +155,11 @@ typedef void (^HBCoreCompletionHandler)(HBCoreResult result);
  *  @param index            the index of the desired title. Use 0 to scan every title.
  *  @param previewsNum         the number of previews image to generate.
  *  @param seconds             the minimum duration of the wanted titles in seconds.
+ *  @param keepPreviews        whether the previews images are kept on disk or discarded.
  *  @param progressHandler     a block called periodically with the progress information.
  *  @param completionHandler   a block called with the scan result.
  */
-- (void)scanURL:(NSURL *)url titleIndex:(NSUInteger)index previews:(NSUInteger)previewsNum minDuration:(NSUInteger)seconds progressHandler:(HBCoreProgressHandler)progressHandler completionHandler:(HBCoreCompletionHandler)completionHandler;
+- (void)scanURL:(NSURL *)url titleIndex:(NSUInteger)index previews:(NSUInteger)previewsNum minDuration:(NSUInteger)seconds keepPreviews:(BOOL)keepPreviews progressHandler:(HBCoreProgressHandler)progressHandler completionHandler:(HBCoreCompletionHandler)completionHandler;
 
 /**
  *  Cancels the scan execution.
@@ -178,9 +186,7 @@ typedef void (^HBCoreCompletionHandler)(HBCoreResult result);
 - (nullable CGImageRef)copyImageAtIndex:(NSUInteger)index
                       forTitle:(HBTitle *)title
                   pictureFrame:(HBPicture *)frame
-                   deinterlace:(BOOL)deinterlace
-                        rotate:(int)angle
-                       flipped:(BOOL)flipped CF_RETURNS_RETAINED;
+                   deinterlace:(BOOL)deinterlace CF_RETURNS_RETAINED;
 
 /**
  *  Returns the counts of the available previews images.

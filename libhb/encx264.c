@@ -1,6 +1,6 @@
 /* encx264.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
@@ -9,9 +9,9 @@
 
 #include <stdarg.h>
 
-#include "hb.h"
-#include "hb_dict.h"
-#include "encx264.h"
+#include "handbrake/handbrake.h"
+#include "handbrake/hb_dict.h"
+#include "handbrake/encx264.h"
 
 int  encx264Init( hb_work_object_t *, hb_job_t * );
 int  encx264Work( hb_work_object_t *, hb_buffer_t **, hb_buffer_t ** );
@@ -28,24 +28,6 @@ hb_work_object_t hb_encx264 =
 
 #define DTS_BUFFER_SIZE 32
 
-/*
- * The frame info struct remembers information about each frame across calls
- * to x264_encoder_encode. Since frames are uniquely identified by their
- * timestamp, we use some bits of the timestamp as an index. The LSB is
- * chosen so that two successive frames will have different values in the
- * bits over any plausible range of frame rates. (Starting with bit 8 allows
- * any frame rate slower than 352fps.) The MSB determines the size of the array.
- * It is chosen so that two frames can't use the same slot during the
- * encoder's max frame delay (set by the standard as 16 frames) and so
- * that, up to some minimum frame rate, frames are guaranteed to map to
- * different slots. (An MSB of 17 which is 2^(17-8+1) = 1024 slots guarantees
- * no collisions down to a rate of .7 fps).
- */
-#define FRAME_INFO_MAX2 (8)     // 2^8 = 256; 90000/256 = 352 frames/sec
-#define FRAME_INFO_MIN2 (17)    // 2^17 = 128K; 90000/131072 = 1.4 frames/sec
-#define FRAME_INFO_SIZE (1 << (FRAME_INFO_MIN2 - FRAME_INFO_MAX2 + 1))
-#define FRAME_INFO_MASK (FRAME_INFO_SIZE - 1)
-
 struct hb_work_private_s
 {
     hb_job_t           * job;
@@ -56,11 +38,7 @@ struct hb_work_private_s
 
     hb_chapter_queue_t * chapter_queue;
 
-    struct {
-        int64_t          duration;
-    } frame_info[FRAME_INFO_SIZE];
-
-    char                 filename[1024];
+    char               * filename;
 
     // Multiple bit-depth
     const x264_api_t *   api;
@@ -151,7 +129,11 @@ static void * x264_lib_open_ubuntu_10bit(void)
 
 void hb_x264_global_init(void)
 {
+#if X264_BUILD < 153
     x264_apis[0].bit_depth                 = x264_bit_depth;
+#else
+    x264_apis[0].bit_depth                 = X264_BIT_DEPTH;
+#endif
     x264_apis[0].param_default             = x264_param_default;
     x264_apis[0].param_default_preset      = x264_param_default_preset;
     x264_apis[0].param_apply_profile       = x264_param_apply_profile;
@@ -164,13 +146,32 @@ void hb_x264_global_init(void)
     x264_apis[0].encoder_close             = x264_encoder_close;
     x264_apis[0].picture_init              = x264_picture_init;
 
+    if (x264_apis[0].bit_depth == 0)
+    {
+        // libx264 supports 8 and 10 bit
+        x264_apis[0].bit_depth                 = 8;
+        x264_apis[1].bit_depth                 = 10;
+        x264_apis[1].param_default             = x264_param_default;
+        x264_apis[1].param_default_preset      = x264_param_default_preset;
+        x264_apis[1].param_apply_profile       = x264_param_apply_profile;
+        x264_apis[1].param_apply_fastfirstpass = x264_param_apply_fastfirstpass;
+        x264_apis[1].param_parse               = x264_param_parse;
+        x264_apis[1].encoder_open              = x264_encoder_open;
+        x264_apis[1].encoder_headers           = x264_encoder_headers;
+        x264_apis[1].encoder_encode            = x264_encoder_encode;
+        x264_apis[1].encoder_delayed_frames    = x264_encoder_delayed_frames;
+        x264_apis[1].encoder_close             = x264_encoder_close;
+        x264_apis[1].picture_init              = x264_picture_init;
+        return;
+    }
+
     // Invalidate other apis
     x264_apis[1].bit_depth = -1;
 
     // Attempt to dlopen a library for handling the bit-depth that we do
     // not already have.
     void *h;
-    if (x264_bit_depth == 8)
+    if (x264_apis[0].bit_depth == 8)
     {
         h = x264_lib_open(libx264_10bit_names);
 #if defined(SYS_LINUX)
@@ -190,8 +191,23 @@ void hb_x264_global_init(void)
     }
 
     int ii;
+    int dll_bitdepth = 0;
+#if X264_BUILD < 153
     int *pbit_depth                   = (int*)hb_dlsym(h, "x264_bit_depth");
+    if (pbit_depth != NULL)
+    {
+        dll_bitdepth = *pbit_depth;
+    }
+#endif
     x264_apis[1].param_default        = hb_dlsym(h, "x264_param_default");
+#if X264_BUILD >= 153
+    if (x264_apis[1].param_default != NULL)
+    {
+        x264_param_t defaults;
+        x264_apis[1].param_default(&defaults);
+        dll_bitdepth = defaults.i_bitdepth;
+    }
+#endif
     x264_apis[1].param_default_preset = hb_dlsym(h, "x264_param_default_preset");
     x264_apis[1].param_apply_profile  = hb_dlsym(h, "x264_param_apply_profile");
     x264_apis[1].param_apply_fastfirstpass =
@@ -215,7 +231,7 @@ void hb_x264_global_init(void)
     x264_apis[1].encoder_close        = hb_dlsym(h, "x264_encoder_close");
     x264_apis[1].picture_init         = hb_dlsym(h, "x264_picture_init");
 
-    if (pbit_depth                             != NULL &&
+    if (dll_bitdepth > 0 && dll_bitdepth != x264_apis[0].bit_depth &&
         x264_apis[1].param_default             != NULL &&
         x264_apis[1].param_default_preset      != NULL &&
         x264_apis[1].param_apply_profile       != NULL &&
@@ -228,7 +244,7 @@ void hb_x264_global_init(void)
         x264_apis[1].encoder_close             != NULL &&
         x264_apis[1].picture_init              != NULL)
     {
-        x264_apis[1].bit_depth = *pbit_depth;
+        x264_apis[1].bit_depth = dll_bitdepth;
     }
 }
 
@@ -321,6 +337,10 @@ int encx264Init( hb_work_object_t * w, hb_job_t * job )
         return 1;
     }
 
+#if X264_BUILD >= 153
+    param.i_bitdepth = bit_depth;
+#endif
+
     /* If the PSNR or SSIM tunes are in use, enable the relevant metric */
     if (job->encoder_tune != NULL && *job->encoder_tune)
     {
@@ -369,48 +389,9 @@ int encx264Init( hb_work_object_t * w, hb_job_t * job )
 
     /* set up the VUI color model & gamma to match what the COLR atom
      * set in muxmp4.c says. See libhb/muxmp4.c for notes. */
-    if( job->color_matrix_code == 5 )
-    {
-        // Custom
-        param.vui.i_colorprim = job->color_prim;
-        param.vui.i_transfer  = job->color_transfer;
-        param.vui.i_colmatrix = job->color_matrix;
-    }
-    else if( job->color_matrix_code == 4 )
-    {
-        // ITU BT.2020 UHD content
-        param.vui.i_colorprim = HB_COLR_PRI_BT2020;
-        param.vui.i_transfer  = HB_COLR_TRA_BT709;
-        param.vui.i_colmatrix = HB_COLR_MAT_BT2020_NCL;
-    }
-    else if( job->color_matrix_code == 3 )
-    {
-        // ITU BT.709 HD content
-        param.vui.i_colorprim = HB_COLR_PRI_BT709;
-        param.vui.i_transfer  = HB_COLR_TRA_BT709;
-        param.vui.i_colmatrix = HB_COLR_MAT_BT709;
-    }
-    else if( job->color_matrix_code == 2 )
-    {
-        // ITU BT.601 DVD or SD TV content (PAL)
-        param.vui.i_colorprim = HB_COLR_PRI_EBUTECH;
-        param.vui.i_transfer  = HB_COLR_TRA_BT709;
-        param.vui.i_colmatrix = HB_COLR_MAT_SMPTE170M;
-    }
-    else if( job->color_matrix_code == 1 )
-    {
-        // ITU BT.601 DVD or SD TV content (NTSC)
-        param.vui.i_colorprim = HB_COLR_PRI_SMPTEC;
-        param.vui.i_transfer  = HB_COLR_TRA_BT709;
-        param.vui.i_colmatrix = HB_COLR_MAT_SMPTE170M;
-    }
-    else
-    {
-        // detected during scan
-        param.vui.i_colorprim = job->title->color_prim;
-        param.vui.i_transfer  = job->title->color_transfer;
-        param.vui.i_colmatrix = job->title->color_matrix;
-    }
+    param.vui.i_colorprim = hb_output_color_prim(job);
+    param.vui.i_transfer  = hb_output_color_transfer(job);
+    param.vui.i_colmatrix = hb_output_color_matrix(job);
 
     /* place job->encoder_options in an hb_dict_t for convenience */
     hb_dict_t * x264_opts = NULL;
@@ -444,10 +425,9 @@ int encx264Init( hb_work_object_t * w, hb_job_t * job )
 
     /* Reload colorimetry settings in case custom values were set
      * in the encoder_options string */
-    job->color_matrix_code = 4;
-    job->color_prim = param.vui.i_colorprim;
-    job->color_transfer = param.vui.i_transfer;
-    job->color_matrix = param.vui.i_colmatrix;
+    job->color_prim_override     = param.vui.i_colorprim;
+    job->color_transfer_override = param.vui.i_transfer;
+    job->color_matrix_override   = param.vui.i_colmatrix;
 
     /* For 25 fps sources, HandBrake's explicit keyints will match the x264 defaults:
      * min-keyint 25 (same as auto), keyint 250. */
@@ -461,18 +441,18 @@ int encx264Init( hb_work_object_t * w, hb_job_t * job )
             min_auto = param.i_keyint_max / 10;
 
         char min[40], max[40];
-        param.i_keyint_min == X264_KEYINT_MIN_AUTO ? 
-            snprintf( min, 40, "auto (%d)", min_auto ) : 
+        param.i_keyint_min == X264_KEYINT_MIN_AUTO ?
+            snprintf( min, 40, "auto (%d)", min_auto ) :
             snprintf( min, 40, "%d", param.i_keyint_min );
 
-        param.i_keyint_max == X264_KEYINT_MAX_INFINITE ? 
-            snprintf( max, 40, "infinite" ) : 
+        param.i_keyint_max == X264_KEYINT_MAX_INFINITE ?
+            snprintf( max, 40, "infinite" ) :
             snprintf( max, 40, "%d", param.i_keyint_max );
 
         hb_log( "encx264: min-keyint: %s, keyint: %s", min, max );
     }
 
-    /* Settings which can't be overriden in the encoder_options string
+    /* Settings which can't be overridden in the encoder_options string
      * (muxer-specific settings, resolution, ratecontrol, etc.). */
 
     /* Disable annexb. Inserts size into nal header instead of start code. */
@@ -500,8 +480,7 @@ int encx264Init( hb_work_object_t * w, hb_job_t * job )
         if( job->pass_id == HB_PASS_ENCODE_1ST ||
             job->pass_id == HB_PASS_ENCODE_2ND )
         {
-            memset( pv->filename, 0, 1024 );
-            hb_get_tempory_filename( job->h, pv->filename, "x264.log" );
+            pv->filename = hb_get_temporary_filename("x264.log");
         }
         switch( job->pass_id )
         {
@@ -547,7 +526,7 @@ int encx264Init( hb_work_object_t * w, hb_job_t * job )
 
     /* B-pyramid is enabled by default. */
     job->areBframes = 2;
-    
+
     if( !param.i_bframe )
     {
         job->areBframes = 0;
@@ -556,7 +535,7 @@ int encx264Init( hb_work_object_t * w, hb_job_t * job )
     {
         job->areBframes = 1;
     }
-    
+
     /* Log the unparsed x264 options string. */
     char *x264_opts_unparsed = hb_x264_param_unparse(pv->api->bit_depth,
                                                      job->encoder_preset,
@@ -617,24 +596,9 @@ void encx264Close( hb_work_object_t * w )
     hb_chapter_queue_close(&pv->chapter_queue);
 
     pv->api->encoder_close( pv->x264 );
+    free( pv->filename );
     free( pv );
     w->private_data = NULL;
-}
-
-/*
- * see comments in definition of 'frame_info' in pv struct for description
- * of what these routines are doing.
- */
-static void save_frame_info( hb_work_private_t * pv, hb_buffer_t * in )
-{
-    int i = (in->s.start >> FRAME_INFO_MAX2) & FRAME_INFO_MASK;
-    pv->frame_info[i].duration = in->s.stop - in->s.start;
-}
-
-static int64_t get_frame_duration( hb_work_private_t * pv, int64_t pts )
-{
-    int i = (pts >> FRAME_INFO_MAX2) & FRAME_INFO_MASK;
-    return pv->frame_info[i].duration;
 }
 
 static hb_buffer_t *nal_encode( hb_work_object_t *w, x264_picture_t *pic_out,
@@ -650,13 +614,13 @@ static hb_buffer_t *nal_encode( hb_work_object_t *w, x264_picture_t *pic_out,
     buf->s.frametype = 0;
 
     // use the pts to get the original frame's duration.
-    buf->s.duration     = get_frame_duration( pv, pic_out->i_pts );
+    buf->s.duration     = AV_NOPTS_VALUE;
     buf->s.start        = pic_out->i_pts;
-    buf->s.stop         = buf->s.start + buf->s.duration;
+    buf->s.stop         = AV_NOPTS_VALUE;
     buf->s.renderOffset = pic_out->i_dts;
-    if ( !w->config->h264.init_delay && pic_out->i_dts < 0 )
+    if ( !w->config->init_delay && pic_out->i_dts < 0 )
     {
-        w->config->h264.init_delay = -pic_out->i_dts;
+        w->config->init_delay = -pic_out->i_dts;
     }
 
     /* Determine what type of frame we have. */
@@ -701,6 +665,7 @@ static hb_buffer_t *nal_encode( hb_work_object_t *w, x264_picture_t *pic_out,
              frames we only get the duration of the first which will
              eventually screw up the muxer & decoder. */
     int i;
+    buf->s.flags &= ~HB_FLAG_FRAMETYPE_REF;
     for( i = 0; i < i_nal; i++ )
     {
         int size = nal[i].i_payload;
@@ -718,10 +683,14 @@ static hb_buffer_t *nal_encode( hb_work_object_t *w, x264_picture_t *pic_out,
              */
             case NAL_SPS:
             case NAL_PPS:
-                continue;
+                if (!job->inline_parameter_sets)
+                {
+                    continue;
+                }
+                break;
 
-            case NAL_SLICE:
             case NAL_SLICE_IDR:
+            case NAL_SLICE:
             case NAL_SEI:
             default:
                 break;
@@ -733,11 +702,7 @@ static hb_buffer_t *nal_encode( hb_work_object_t *w, x264_picture_t *pic_out,
          * Also, since libx264 doesn't tell us when B-frames are
          * themselves reference frames, figure it out on our own.
          */
-        if (nal[i].i_ref_idc == NAL_PRIORITY_DISPOSABLE)
-        {
-            buf->s.flags &= ~HB_FLAG_FRAMETYPE_REF;
-        }
-        else
+        if (nal[i].i_ref_idc != NAL_PRIORITY_DISPOSABLE)
         {
             if (buf->s.frametype == HB_FRAME_B)
             {
@@ -790,7 +755,8 @@ static hb_buffer_t *x264_encode( hb_work_object_t *w, hb_buffer_t *in )
     hb_buffer_t       *tmp = NULL;
 
     /* Point x264 at our current buffers Y(UV) data.  */
-    if (pv->pic_in.img.i_csp & X264_CSP_HIGH_DEPTH)
+    if (pv->pic_in.img.i_csp & X264_CSP_HIGH_DEPTH &&
+        job->pix_fmt == AV_PIX_FMT_YUV420P)
     {
         tmp = expand_buf(pv->api->bit_depth, in);
         pv->pic_in.img.i_stride[0] = tmp->plane[0].stride;
@@ -839,7 +805,6 @@ static hb_buffer_t *x264_encode( hb_work_object_t *w, hb_buffer_t *in )
 
     // Remember info about this frame that we need to pass across
     // the x264_encoder_encode call (since it reorders frames).
-    save_frame_info( pv, in );
 
     /* Feed the input PTS to x264 so it can figure out proper output PTS */
     pv->pic_in.i_pts = in->s.start;
@@ -933,15 +898,23 @@ static int apply_h264_profile(const x264_api_t *api, x264_param_t *param,
         /*
          * lossless requires High 4:4:4 Predictive profile
          */
-        if (param->rc.f_rf_constant < 1.0 &&
-            param->rc.i_rc_method == X264_RC_CRF &&
-            strcasecmp(h264_profile, "high444") != 0)
+        int qp_bd_offset = 6 * (api->bit_depth - 8);
+        if (strcasecmp(h264_profile, "high444") != 0 &&
+            ((param->rc.i_rc_method == X264_RC_CQP && param->rc.i_qp_constant <= 0) ||
+             (param->rc.i_rc_method == X264_RC_CRF && (int)(param->rc.f_rf_constant + qp_bd_offset) <= 0)))
         {
             if (verbose)
             {
                 hb_log("apply_h264_profile [warning]: lossless requires high444 profile, disabling");
             }
-            param->rc.f_rf_constant = 1.0;
+            if (param->rc.i_rc_method == X264_RC_CQP)
+            {
+                param->rc.i_qp_constant = 1;
+            }
+            else
+            {
+                param->rc.f_rf_constant = 1 - qp_bd_offset;
+            }
         }
         return api->param_apply_profile(param, h264_profile);
     }
@@ -1012,7 +985,8 @@ int apply_h264_level(const x264_api_t *api, x264_param_t *param,
             return -1;
         }
     }
-    else if(!strcasecmp(h264_level, hb_h264_level_names[0]))
+    else if(h264_level != NULL &&
+            !strcasecmp(h264_level, hb_h264_level_names[0]))
     {
         // "auto", do nothing
         return 0;
@@ -1297,7 +1271,7 @@ char * hb_x264_param_unparse(int bit_depth, const char *x264_preset,
     if (api->param_default_preset(&param, x264_preset, x264_tune) < 0)
     {
         /*
-         * Note: GUIs should be able to always specifiy valid preset/tunes, so
+         * Note: GUIs should be able to always specify valid preset/tunes, so
          *       this code will hopefully never be reached
          */
         return strdup("hb_x264_param_unparse: invalid x264 preset/tune");
@@ -1848,7 +1822,7 @@ char * hb_x264_param_unparse(int bit_depth, const char *x264_preset,
     }
     else
     {
-        // pbratio requires bframes and is incomaptible with mbtree
+        // pbratio requires bframes and is incompatible with mbtree
         hb_dict_remove(x264_opts, "pbratio");
     }
     if (param.rc.f_qcompress != defaults.rc.f_qcompress)

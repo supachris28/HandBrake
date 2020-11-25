@@ -6,20 +6,15 @@
 
 #import "HBSubtitlesTrack.h"
 #import "HBCodingUtilities.h"
+#import "HBTitle.h"
 
-#include "common.h"
-#include "lang.h"
+#include "handbrake/common.h"
+#include "handbrake/lang.h"
 
-#define CHAR_CODE_DEFAULT_INDEX 11
+#define CHAR_CODE_DEFAULT_INDEX 28
 
 static NSArray *charEncodingArray = nil;
 static NSArray *_languagesArray = nil;
-
-NSString *keySubTrackName = @"keySubTrackName";
-NSString *keySubTrackLanguageIsoCode = @"keySubTrackLanguageIsoCode";
-NSString *keySubTrackType = @"keySubTrackType";
-NSString *keySubTrackSrtFileURL = @"keySubTrackSrtFileURL";
-NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
 
 @interface HBSubtitlesTrack ()
 @property (nonatomic, readwrite) BOOL validating;
@@ -60,6 +55,7 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
         _dataSource = dataSource;
         _sourceTrackIdx = index;
         _container = container;
+        _title = [dataSource sourceTrackAtIndex:_sourceTrackIdx].title;
 
         [self validateSettings];
 
@@ -71,8 +67,8 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
 
 - (void)validateSettings
 {
-    NSDictionary *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
-    self.type = [sourceTrack[keySubTrackType] intValue];
+    HBTitleSubtitlesTrack *sourceTrack = [_dataSource sourceTrackAtIndex:_sourceTrackIdx];
+    self.type = sourceTrack.type;
 
     if (!hb_subtitle_can_burn(_type))
     {
@@ -98,9 +94,9 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
     }
 
     // check to see if we are an srt, in which case set our file path and source track type kvp's
-    if (_type == SRTSUB)
+    if (_type == IMPORTSRT || _type == IMPORTSSA)
     {
-        self.fileURL = [sourceTrack[keySubTrackSrtFileURL] copy];
+        self.fileURL = sourceTrack.fileURL;
         self.isoLanguage = @"eng";
         self.charCode = charEncodingArray[CHAR_CODE_DEFAULT_INDEX];
     }
@@ -126,6 +122,8 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
 
     if (!(self.undo.isUndoing || self.undo.isRedoing))
     {
+        self.title = [self.dataSource sourceTrackAtIndex:_sourceTrackIdx].title;
+
         [self validateSettings];
 
         if (oldIdx != sourceTrackIdx)
@@ -207,7 +205,7 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
     }
 }
 
-#pragma mark - Srt only properties
+#pragma mark - External subtitles track only properties
 
 - (void)setFileURL:(NSURL *)fileURL
 {
@@ -220,7 +218,7 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
 
 - (void)setIsoLanguage:(NSString *)isoLanguage
 {
-    if (![isoLanguage isEqualToString:_isoLanguage])
+    if (_isoLanguage != isoLanguage || (_isoLanguage && ![isoLanguage isEqualToString:_isoLanguage]))
     {
         [[self.undo prepareWithInvocationTarget:self] setIsoLanguage:_isoLanguage];
     }
@@ -229,7 +227,7 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
 
 - (void)setCharCode:(NSString *)charCode
 {
-    if (![charCode isEqualToString:_charCode])
+    if (_charCode != charCode || (_charCode && ![charCode isEqualToString:_charCode]))
     {
         [[self.undo prepareWithInvocationTarget:self] setCharCode:_charCode];
     }
@@ -252,9 +250,9 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
     return [self.dataSource sourceTracksArray];
 }
 
-- (BOOL)isSrt
+- (BOOL)isExternal
 {
-    return self.type == SRTSUB;
+    return self.type == IMPORTSRT || self.type == IMPORTSSA;
 }
 
 - (BOOL)isEnabled
@@ -288,7 +286,7 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
 {
     NSSet *retval = nil;
 
-    if ([key isEqualToString: @"isSrt"])
+    if ([key isEqualToString: @"isExternal"])
     {
         retval = [NSSet setWithObjects: @"type", nil];
     }
@@ -336,6 +334,8 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
         copy->_isoLanguage = [_isoLanguage copy];
         copy->_charCode = [_charCode copy];
         copy->_offset = _offset;
+
+        copy->_title = [_title copy];
     }
 
     return copy;
@@ -350,7 +350,7 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
 
 - (void)encodeWithCoder:(NSCoder *)coder
 {
-    [coder encodeInt:1 forKey:@"HBSubtitlesTrackVersion"];
+    [coder encodeInt:2 forKey:@"HBSubtitlesTrackVersion"];
 
     encodeInteger(_sourceTrackIdx);
     encodeInt(_type);
@@ -359,6 +359,7 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
     encodeBool(_forcedOnly);
     encodeBool(_burnedIn);
     encodeBool(_def);
+    encodeObject(_title);
 
     encodeObject(_fileURL);
     encodeObject(_isoLanguage);
@@ -370,13 +371,14 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
 {
     self = [super init];
 
-    decodeInteger(_sourceTrackIdx);
-    decodeInt(_type);
-    decodeInt(_container);
+    decodeInteger(_sourceTrackIdx); if (_sourceTrackIdx < 0) { goto fail; }
+    decodeInt(_type); if (_type < VOBSUB || _type > DVBSUB) { goto fail; }
+    decodeInt(_container); if (_container != HB_MUX_MP4 && _container != HB_MUX_MKV && _container != HB_MUX_WEBM) { goto fail; }
 
     decodeBool(_forcedOnly);
     decodeBool(_burnedIn);
     decodeBool(_def);
+    decodeObject(_title, NSString);
 
     decodeObject(_fileURL, NSURL);
     decodeObject(_isoLanguage, NSString);
@@ -384,13 +386,16 @@ NSString *keySubTrackSrtFileURLBookmark = @"keySubTrackSrtFileURLBookmark";
     decodeInt(_offset);
 
     return self;
+
+fail:
+    return nil;
 }
 
 @end
 
-#pragma mark - Value Trasformers
+#pragma mark - Value Transformers
 
-@implementation HBIsoLanguageTrasformer
+@implementation HBIsoLanguageTransformer
 
 + (Class)transformedValueClass
 {

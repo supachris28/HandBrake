@@ -1,41 +1,47 @@
 /* vfr.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "hb.h"
+#include "handbrake/handbrake.h"
+
+//#define HB_DEBUG_CFR_DROPS 1
+#define MAX_FRAME_ANALYSIS_DEPTH 10
 
 struct hb_filter_private_s
 {
-    hb_job_t    * job;
-    int           cfr;
-    hb_rational_t input_vrate;
-    hb_rational_t vrate;
-    hb_fifo_t   * delay_queue;
-    int           dropped_frames;
-    int           extended_frames;
-    int64_t       last_start[4];
-    int64_t       last_stop[4];
-    int64_t       lost_time[4];
-    int64_t       total_lost_time;
-    int64_t       total_gained_time;
-    int           count_frames;      // frames output so far
-    double        frame_rate;        // 90KHz ticks per frame (for CFR/PFR)
-    int64_t       out_last_stop;     // where last frame ended (for CFR/PFR)
-    int           drops;             // frames dropped (for CFR/PFR)
-    int           dups;              // frames duped (for CFR/PFR)
+    hb_job_t      * job;
+    int             cfr;
+    hb_rational_t   input_vrate;
+    hb_rational_t   vrate;
+    hb_fifo_t     * delay_queue;
+    int             dropped_frames;
+    int             extended_frames;
+    int64_t         last_start[4];
+    int64_t         last_stop[4];
+    int64_t         lost_time[4];
+    int64_t         total_lost_time;
+    int64_t         total_gained_time;
+    int             count_frames;       // frames output so far
+    double          frame_duration;     // 90KHz ticks per frame (for CFR/PFR)
+    double          out_last_stop;      // where last frame ended (for CFR/PFR)
+    int             drops;              // frames dropped (for CFR/PFR)
+    int             dups;               // frames duped (for CFR/PFR)
 
     // Duplicate frame detection members
-    float         max_metric;   // highest motion metric since
-                                // last output frame
-    float         frame_metric; // motion metric of last frame
-    float         out_metric;   // motion metric of last output frame
-    int           sync_parity;
-    unsigned      gamma_lut[256];
+    int             frame_analysis_depth;
+    int64_t         frame_analysis_duration;
+    hb_list_t     * frame_rate_list;
+    double        * frame_metric;
+
+    unsigned        gamma_lut[256];
+#if defined(HB_DEBUG_CFR_DROPS)
+    int64_t         sequence;
+#endif
 };
 
 static int hb_vfr_init( hb_filter_object_t * filter,
@@ -79,21 +85,20 @@ static void build_gamma_lut( hb_filter_private_t * pv )
 
 #define DUP_THRESH_SSE 5.0
 
-// Compute ths sum of squared errors for a 16x16 block
-// Gamma adjusts pixel values so that less visible diffreences
+// Compute the sum of squared errors for a 16x16 block
+// Gamma adjusts pixel values so that less visible differences
 // count less.
-static inline unsigned sse_block16( hb_filter_private_t *pv, uint8_t *a, uint8_t *b, int stride )
+static inline unsigned sse_block16( unsigned *gamma_lut, uint8_t *a, uint8_t *b, int stride )
 {
     int x, y;
     unsigned sum = 0;
     int diff;
-    unsigned *g = pv->gamma_lut;
 
     for( y = 0; y < 16; y++ )
     {
         for( x = 0; x < 16; x++ )
         {
-            diff =  g[a[x]] - g[b[x]];
+            diff =  gamma_lut[a[x]] - gamma_lut[b[x]];
             sum += diff * diff;
         }
         a += stride;
@@ -104,7 +109,7 @@ static inline unsigned sse_block16( hb_filter_private_t *pv, uint8_t *a, uint8_t
 
 // Sum of squared errors.  Computes and sums the SSEs for all
 // 16x16 blocks in the images.  Only checks the Y component.
-static float motion_metric( hb_filter_private_t * pv, hb_buffer_t * a, hb_buffer_t * b )
+static float motion_metric( unsigned * gamma_lut, hb_buffer_t * a, hb_buffer_t * b )
 {
     int bw = a->f.width / 16;
     int bh = a->f.height / 16;
@@ -118,11 +123,72 @@ static float motion_metric( hb_filter_private_t * pv, hb_buffer_t * a, hb_buffer
     {
         for( x = 0; x < bw; x++ )
         {
-            sum +=  sse_block16( pv, pa + y * 16 * stride + x * 16,
-                                 pb + y * 16 * stride + x * 16, stride );
+            sum +=  sse_block16( gamma_lut, pa + y * 16 * stride + x * 16,
+                                            pb + y * 16 * stride + x * 16,
+                                            stride );
         }
     }
     return (float)sum / ( a->f.width * a->f.height );;
+}
+
+static void delete_metric(double * metrics, int pos, int size)
+{
+    double * dst   = &metrics[pos];
+    double * src   = &metrics[pos + 1];
+    int msize = (size - (pos + 1)) * sizeof(double);
+    memmove(dst, src, msize);
+}
+
+static int find_drop_frame(hb_filter_private_t * pv, int count)
+{
+    int           ii, min;
+    double      * metrics = pv->frame_metric;
+    hb_buffer_t * buf, * first;
+    double        cfr_stop;
+
+    // compute where the second to last frame in the frame_rate_list would
+    // stop if the frame rate were constant.
+    //
+    // this is our target stopping time for CFR and earliest possible
+    // stopping time for PFR.
+    cfr_stop = pv->out_last_stop + pv->frame_duration * (count - 1);
+
+    // If the last frame's stop timestamp is before the calculated
+    // CFR stop time of the second to last frame, then we need to drop a frame.
+    buf   = hb_list_item(pv->frame_rate_list, count - 1);
+
+    // Shortcut exit when entire list is CFR OK
+    if (buf->s.stop >= (int64_t)cfr_stop)
+    {
+        return -1;
+    }
+
+    first = hb_list_item(pv->frame_rate_list, 0);
+    min = 0;
+    for (ii = 1; ii < count; ii++)
+    {
+        hb_buffer_t * buf = hb_list_item(pv->frame_rate_list, ii);
+        // Don't check buffers outside analysis window
+        if (buf->s.stop - first->s.start > pv->frame_analysis_duration)
+        {
+            break;
+        }
+        if (min < 0 || metrics[ii] < metrics[min])
+        {
+            min = ii;
+        }
+    }
+
+    cfr_stop = pv->out_last_stop + pv->frame_duration * (ii - 1);
+    buf      = hb_list_item(pv->frame_rate_list, ii - 1);
+
+    // Don't drop buffers if frames fit in CRF time bounds
+    if (buf->s.stop >= (int64_t)cfr_stop)
+    {
+        return -1;
+    }
+
+    return min;
 }
 
 // This section of the code implements video frame rate control.
@@ -142,135 +208,131 @@ static float motion_metric( hb_filter_private_t * pv, hb_buffer_t * a, hb_buffer
 //       to keep the average under this value. Other than those drops, frame
 //       times are left alone.
 //
-
-static void adjust_frame_rate( hb_filter_private_t *pv, hb_buffer_list_t *list )
+static hb_buffer_t * adjust_frame_rate( hb_filter_private_t * pv,
+                                        hb_buffer_t * in )
 {
-    hb_buffer_t *out = hb_buffer_list_tail(list);
 
-    if (out == NULL || out->size <= 0 )
-    {
-        return;
-    }
-
-    if ( pv->cfr == 0 )
+    if (pv->cfr == 0)
     {
         ++pv->count_frames;
-        pv->out_last_stop = out->s.stop;
-        return;
+        pv->out_last_stop = in->s.stop;
+        return in;
     }
 
-    // compute where this frame would stop if the frame rate were constant
-    // (this is our target stopping time for CFR and earliest possible
-    // stopping time for PFR).
-    double cfr_stop = pv->frame_rate * ( pv->count_frames + 1 );
+    int count;
 
-    hb_buffer_t * next = hb_fifo_see( pv->delay_queue );
-
-    float next_metric = 0;
-    if( next )
-        next_metric = motion_metric( pv, out, next );
-
-    if( pv->out_last_stop >= out->s.stop )
+    // in == NULL signals we are flushing the frame_rate_list
+    if (in != NULL)
     {
-        ++pv->drops;
-        hb_buffer_list_rem_tail(list);
-        hb_buffer_close(&out);
+        if (pv->out_last_stop == (int64_t)AV_NOPTS_VALUE)
+        {
+            pv->out_last_stop = in->s.start;
+        }
 
-        pv->frame_metric = next_metric;
-        if( next_metric > pv->max_metric )
-            pv->max_metric = next_metric;
+#if defined(HB_DEBUG_CFR_DROPS)
+        in->s.pcr = pv->sequence++;
+#endif
+        hb_list_add(pv->frame_rate_list, in);
+        count = hb_list_count(pv->frame_rate_list);
+        if (count < 2)
+        {
+            return NULL;
+        }
 
-        return;
+        hb_buffer_t * penultimate, * ultimate;
+        penultimate = hb_list_item(pv->frame_rate_list, count - 2);
+        ultimate    = hb_list_item(pv->frame_rate_list, count - 1);
+
+        pv->frame_metric[count - 1] = motion_metric(pv->gamma_lut,
+                                                    penultimate, ultimate);
+
+        if (count < pv->frame_analysis_depth)
+        {
+            return NULL;
+        }
+    }
+    else
+    {
+        count = hb_list_count(pv->frame_rate_list);
     }
 
-    if( out->s.start <= pv->out_last_stop &&
-        out->s.stop > pv->out_last_stop &&
-        next && next->s.stop < cfr_stop )
+    hb_buffer_list_t   list;
+    hb_buffer_t      * out;
+    double             cfr_stop;
+    int                drop_frame;
+
+    hb_buffer_list_clear(&list);
+
+    drop_frame = find_drop_frame(pv, count);
+    if (drop_frame >= 0)
     {
-        // This frame starts before the end of the last output
-        // frame and ends after the end of the last output
-        // frame (i.e. it straddles it).  Also the next frame
-        // ends before the end of the next output frame. If the
-        // next frame is not a duplicate, and we haven't seen
-        // a changed frame since the last output frame,
-        // then drop this frame.
+
+        // We may have to drop multiple frames.  Pick frames to drop
+        // that appear to have minimum motion.
         //
-        // This causes us to sync to the pattern of progressive
-        // 23.976 fps content that has been upsampled to
-        // progressive 59.94 fps.
-        if( pv->out_metric > pv->max_metric &&
-            next_metric > pv->max_metric )
-        {
-            // Pattern: N R R N
-            //          o   c n
-            // N == new frame
-            // R == repeat frame
-            // o == last output frame
-            // c == current frame
-            // n == next frame
-            // We haven't seen a frame change since the last output
-            // frame and the next frame changes. Use the next frame,
-            // drop this one.
-            ++pv->drops;
-            pv->frame_metric = next_metric;
-            pv->max_metric = next_metric;
-            pv->sync_parity = 1;
-            hb_buffer_list_rem_tail(list);
-            hb_buffer_close(&out);
-            return;
-        }
-        else if( pv->sync_parity &&
-                 pv->out_metric < pv->max_metric &&
-                 pv->max_metric > pv->frame_metric &&
-                 pv->frame_metric < next_metric )
-        {
-            // Pattern: R N R N
-            //          o   c n
-            // N == new frame
-            // R == repeat frame
-            // o == last output frame
-            // c == current frame
-            // n == next frame
-            // If we see this pattern, we must not use the next
-            // frame when straddling the current frame.
-            pv->sync_parity = 0;
-        }
-        else if( pv->sync_parity )
-        {
-            // The pattern is indeterminate.  Continue dropping
-            // frames on the same schedule
-            ++pv->drops;
-            pv->frame_metric = next_metric;
-            pv->max_metric = next_metric;
-            pv->sync_parity = 1;
-            hb_buffer_list_rem_tail(list);
-            hb_buffer_close(&out);
-            return;
-        }
+        // The main use case we are trying to cover here is
+        // "progressive telecine" where there is a repeating pattern
+        // of a new frame followed by some number of repeated frames.
+        // We want to keep the "new frames" and drop the repeates.
+        out = hb_list_item(pv->frame_rate_list, drop_frame);
 
+#if defined(HB_DEBUG_CFR_DROPS)
+        hb_log("CFR Drop: %ld metric %d", out->s.pcr, (int)pv->frame_metric[drop_frame]);
+        int jj;
+        for (jj = 0; jj < count; jj++)
+        {
+            if (jj == drop_frame)
+            {
+                fprintf(stderr, "(%4d) ", (int)pv->frame_metric[jj]);
+            }
+            else
+            {
+                fprintf(stderr, "%6d ", (int)pv->frame_metric[jj]);
+            }
+        }
+        fprintf(stderr, "\n");
+#endif
+
+        hb_list_rem(pv->frame_rate_list, out);
+        hb_buffer_close(&out);
+        delete_metric(pv->frame_metric, drop_frame, count);
+        ++pv->drops;
+        return NULL;
     }
+
+    out = hb_list_item(pv->frame_rate_list, 0);
+
+#if defined(HB_DEBUG_CFR_DROPS)
+    static int64_t lastpass = 0;
+    hb_log("CFR Pass: %ld ~ %ld metric %d", out->s.pcr, out->s.pcr - lastpass, (int)pv->frame_metric[0]);
+    lastpass = out->s.pcr;
+#endif
+
+    hb_list_rem(pv->frame_rate_list, out);
+    hb_buffer_list_append(&list, out);
+    delete_metric(pv->frame_metric, 0, count);
 
     // this frame has to start where the last one stopped.
     out->s.start = pv->out_last_stop;
-
-    pv->out_metric = pv->frame_metric;
-    pv->frame_metric = next_metric;
-    pv->max_metric = next_metric;
+    cfr_stop = pv->out_last_stop + pv->frame_duration;
 
     // at this point we know that this frame doesn't push the average
     // rate over the limit so we just pass it on for PFR. For CFR we're
     // going to return it (with its start & stop times modified) and
     // we may have to dup it.
     ++pv->count_frames;
-    if ( pv->cfr > 1 )
+    if (pv->cfr > 1)
     {
         // PFR - we're going to keep the frame but may need to
         // adjust it's stop time to meet the average rate constraint.
-        if ( out->s.stop <= cfr_stop )
+        if (out->s.stop < cfr_stop)
         {
-            out->s.stop = cfr_stop;
+            out->s.stop = pv->out_last_stop = cfr_stop;
         }
-        pv->out_last_stop = out->s.stop;
+        else
+        {
+            pv->out_last_stop = out->s.stop;
+        }
     }
     else
     {
@@ -278,23 +340,36 @@ static void adjust_frame_rate( hb_filter_private_t *pv, hb_buffer_list_t *list )
         // buffer that ends too far in the future or, if the buffer is
         // two or more frame times long, split it into multiple pieces,
         // each of which is a frame time long.
-        double excess_dur = (double)out->s.stop - cfr_stop;
-        out->s.stop = cfr_stop;
-        pv->out_last_stop = out->s.stop;
-        for ( ; excess_dur >= pv->frame_rate; excess_dur -= pv->frame_rate )
+        double excess = (double)out->s.stop - cfr_stop;
+        out->s.stop = pv->out_last_stop = cfr_stop;
+        for (; excess >= pv->frame_duration; excess -= pv->frame_duration)
         {
             /* next frame too far ahead - dup current frame */
             hb_buffer_t *dup = hb_buffer_dup( out );
             dup->s.new_chap = 0;
             dup->s.start = cfr_stop;
-            cfr_stop += pv->frame_rate;
-            dup->s.stop = cfr_stop;
-            pv->out_last_stop = dup->s.stop;
-            hb_buffer_list_append(list, dup);
+            cfr_stop += pv->frame_duration;
+            dup->s.stop = pv->out_last_stop = cfr_stop;
+            hb_buffer_list_append(&list, dup);
             ++pv->dups;
             ++pv->count_frames;
         }
     }
+
+    return hb_buffer_list_clear(&list);
+}
+
+static hb_buffer_t * flush_frames(hb_filter_private_t * pv)
+{
+    hb_buffer_list_t list;
+
+    hb_buffer_list_clear(&list);
+    while (hb_list_count(pv->frame_rate_list) > 0)
+    {
+        hb_buffer_list_append(&list, adjust_frame_rate(pv, NULL));
+    }
+
+    return hb_buffer_list_clear(&list);
 }
 
 static int hb_vfr_init(hb_filter_object_t *filter, hb_filter_init_t *init)
@@ -308,24 +383,59 @@ static int hb_vfr_init(hb_filter_object_t *filter, hb_filter_init_t *init)
     hb_dict_extract_int(&pv->cfr, filter->settings, "mode");
     hb_dict_extract_rational(&pv->vrate, filter->settings, "rate");
 
+    // frame-drop analysis always looks at at least 2 buffers
+    pv->frame_analysis_depth = 2;
+
+    // Calculate the number of frames we need to keep in order to
+    // detect "best" candidate frames to drop.
+    double in_vrate  = (double)pv->input_vrate.num / pv->input_vrate.den;
+    double out_vrate = (double)pv->vrate.num / pv->vrate.den;
+    if (in_vrate > out_vrate)
+    {
+        // in_vrate / out_vrate tells us how many consecutive repeated
+        // frames we can expect to see.  if the number of consecutive
+        // repeated frame is < 2, we need the number of consecutive
+        // non-repeated frames.  Then add 1 so that we should have
+        // transitions that we can detect at both ends of a sequence.
+        double factor = in_vrate / out_vrate;
+        if (factor > 1.0 && factor < 2.0)
+        {
+            factor = 1 / (factor - 1);
+        }
+        pv->frame_analysis_depth = ceil(factor) + 1;
+
+        // if we end up with an absurdly large value, limit it
+        if (pv->frame_analysis_depth > MAX_FRAME_ANALYSIS_DEPTH)
+        {
+            pv->frame_analysis_depth = MAX_FRAME_ANALYSIS_DEPTH;
+        }
+    }
+    pv->frame_analysis_duration = pv->frame_analysis_depth * 90000 / in_vrate;
+    pv->frame_metric = calloc(pv->frame_analysis_depth, sizeof(double));
+    pv->frame_metric[0] = INT_MAX;
+
     pv->job = init->job;
 
     /* Setup FIFO queue for subtitle cache */
     pv->delay_queue = hb_fifo_init( 8, 1 );
+    pv->frame_rate_list = hb_list_init();
+
 
     /* VFR IVTC needs a bunch of time-keeping variables to track
       how many frames are dropped, how many are extended, what the
       last 4 start and stop times were (so they can be modified),
       how much time has been lost and gained overall, how much time
       the latest 4 frames should be extended by */
-    pv->dropped_frames = 0;
-    pv->extended_frames = 0;
-    pv->last_start[0] = 0;
-    pv->last_stop[0] = 0;
-    pv->total_lost_time = 0;
+    pv->dropped_frames    = 0;
+    pv->extended_frames   = 0;
+    pv->last_start[0]     = 0;
+    pv->last_stop[0]      = 0;
+    pv->total_lost_time   = 0;
     pv->total_gained_time = 0;
-    pv->lost_time[0] = 0; pv->lost_time[1] = 0; pv->lost_time[2] = 0; pv->lost_time[3] = 0;
-    pv->frame_metric = 1000; // Force first frame
+    pv->lost_time[0]      = 0;
+    pv->lost_time[1]      = 0;
+    pv->lost_time[2]      = 0;
+    pv->lost_time[3]      = 0;
 
     if (pv->cfr == 2)
     {
@@ -344,8 +454,9 @@ static int hb_vfr_init(hb_filter_object_t *filter, hb_filter_init_t *init)
     {
         init->vrate = pv->vrate;
     }
-    pv->frame_rate        = (double)pv->vrate.den * 90000. / pv->vrate.num;
-    init->cfr             = pv->cfr;
+    pv->frame_duration = (double)pv->vrate.den * 90000. / pv->vrate.num;
+    pv->out_last_stop  = (int64_t)AV_NOPTS_VALUE;
+    init->cfr          = pv->cfr;
 
     return 0;
 }
@@ -362,7 +473,7 @@ static hb_filter_info_t * hb_vfr_info( hb_filter_object_t * filter )
     info->human_readable_desc = malloc(128);
     info->human_readable_desc[0] = 0;
 
-    info->out.vrate      = pv->input_vrate;
+    info->output.vrate      = pv->input_vrate;
     if (pv->cfr == 2)
     {
         // For PFR, we want the framerate based on the source's actual
@@ -373,14 +484,14 @@ static hb_filter_info_t * hb_vfr_info( hb_filter_object_t * filter )
         {
             // peak framerate is lower than the source framerate.
             // so signal that the framerate will be the peak fps.
-            info->out.vrate = pv->vrate;
+            info->output.vrate = pv->vrate;
         }
     }
     else
     {
-        info->out.vrate = pv->vrate;
+        info->output.vrate = pv->vrate;
     }
-    info->out.cfr = pv->cfr;
+    info->output.cfr = pv->cfr;
     if ( pv->cfr == 0 )
     {
         /* Ensure we're using "Same as source" FPS */
@@ -451,6 +562,8 @@ static void hb_vfr_close( hb_filter_object_t * filter )
     {
         hb_fifo_close( &pv->delay_queue );
     }
+    free(pv->frame_metric);
+    hb_list_close(&pv->frame_rate_list);
 
     /* Cleanup render work structure */
     free( pv );
@@ -462,26 +575,20 @@ static int hb_vfr_work( hb_filter_object_t * filter,
                         hb_buffer_t ** buf_out )
 {
     hb_filter_private_t * pv = filter->private_data;
-    hb_buffer_list_t      list;
     hb_buffer_t         * in = *buf_in;
     hb_buffer_t         * out = NULL;
 
     *buf_in = NULL;
     *buf_out = NULL;
 
-    hb_buffer_list_clear(&list);
-
     if (in->s.flags & HB_BUF_FLAG_EOF)
     {
+        hb_buffer_list_t   list;
         hb_buffer_t      * next;
         int                counter = 2;
 
-        /* If the input buffer is end of stream, send out an empty one
-         * to the next stage as well. To avoid losing the contents of
-         * the delay queue connect the buffers in the delay queue in
-         * the correct order, and add the end of stream buffer to the
-         * end.
-         */
+        // Flush the delay_queue and frame rate adjustment
+        hb_buffer_list_clear(&list);
         while ((next = hb_fifo_get(pv->delay_queue)) != NULL)
         {
 
@@ -495,9 +602,9 @@ static int hb_vfr_work( hb_filter_object_t * filter,
             next->s.start = pv->last_start[counter];
             next->s.stop  = pv->last_stop[counter--];
 
-            hb_buffer_list_append(&list, next);
-            adjust_frame_rate(pv, &list);
+            hb_buffer_list_append(&list, adjust_frame_rate(pv, next));
         }
+        hb_buffer_list_append(&list, flush_frames(pv));
         hb_buffer_list_append(&list, in);
         *buf_out = hb_buffer_list_clear(&list);
         return HB_FILTER_DONE;
@@ -620,10 +727,8 @@ static int hb_vfr_work( hb_filter_object_t * filter,
     out->s.start = pv->last_start[3];
     out->s.stop = pv->last_stop[3];
 
-    hb_buffer_list_append(&list, out);
-    adjust_frame_rate(pv, &list);
+    *buf_out = adjust_frame_rate(pv, out);
 
-    *buf_out = hb_buffer_list_clear(&list);
     return HB_FILTER_OK;
 }
 

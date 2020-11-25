@@ -9,19 +9,51 @@
 
 namespace HandBrakeWPF.Views
 {
+    using System;
+    using System.Diagnostics.CodeAnalysis;
     using System.Windows;
+    using System.Windows.Controls;
+    using System.Windows.Input;
 
-    /// <summary>
-    /// Interaction logic for ErrorView.xaml
-    /// </summary>
+    using HandBrakeWPF.Commands;
+    using HandBrakeWPF.ViewModels.Interfaces;
+
     public partial class ErrorView : Window
     {
-        /// <summary>
-        /// Initializes a new instance of the <see cref="ErrorView"/> class.
-        /// </summary>
         public ErrorView()
+        {  
+            this.InitializeComponent();
+            this.InputBindings.Add(new InputBinding(new CopyError(this.errorText), new KeyGesture(Key.C, ModifierKeys.Control))); // Copy Error
+        }
+    }
+
+    public class CopyError : ICommand
+    {
+        private readonly TextBox textBlock;
+
+        public CopyError(TextBox textBlock)
         {
-            InitializeComponent();
+            this.textBlock = textBlock;
+        }
+
+        public event EventHandler CanExecuteChanged;
+
+        public bool CanExecute(object parameter)
+        {
+            return true;
+        }
+
+        public void Execute(object parameter)
+        {
+            if (this.textBlock != null)
+            {
+                Clipboard.SetText(this.textBlock.Text);
+            }      
+        }
+
+        protected virtual void OnCanExecuteChanged()
+        {
+            this.CanExecuteChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 }

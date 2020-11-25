@@ -5,14 +5,16 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import "HBOutputFileWriter.h"
-#import "HBUtilities.h"
+
+@import HandBrakeKit.HBUtilities;
 
 @implementation HBOutputFileWriter
 {
     FILE *f;
+    NSDateFormatter *_formatter;
 }
 
-- (nullable instancetype)initWithFileURL:(NSURL *)url;
+- (nullable instancetype)initWithFileURL:(NSURL *)url
 {
     self = [super init];
     if (self)
@@ -25,13 +27,13 @@
                                                                  error:&error];
         if (!result)
         {
-            [HBUtilities writeToActivityLog:"Error: coudln't open activity log file, %@", error];
+            [HBUtilities writeToActivityLog:"Error: couldn't open activity log file, %@", error];
             return nil;
         }
 
         _url = [url copy];
 
-        f = fopen(url.path.fileSystemRepresentation, "w");
+        f = fopen(url.fileSystemRepresentation, "w");
         if (!f)
         {
             return nil;
@@ -42,6 +44,11 @@
         {
             return nil;
         }
+
+        _formatter = [[NSDateFormatter alloc] init];
+        _formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        _formatter.dateFormat = @"yyyy-MM-dd'T'HH:mm:ssZZZZZ";
+        _formatter.timeZone = [NSTimeZone timeZoneForSecondsFromGMT:0];
 
         [self writeHeaderForReason:@"Session"];
     }
@@ -58,7 +65,7 @@
 {
     [self write:[NSString stringWithFormat:@"HandBrake Activity Log for %@: %@\n%@\n",
                  reason,
-                 [[NSDate date] descriptionWithCalendarFormat:nil timeZone:nil locale:nil],
+                 [_formatter stringFromDate:[NSDate date]],
                  [HBUtilities handBrakeVersion]]];
 }
 
@@ -68,12 +75,7 @@
     fflush(f);
 }
 
-- (void)stdoutRedirect:(NSString *)text
-{
-    [self write:text];
-}
-
-- (void)stderrRedirect:(NSString *)text
+- (void)redirect:(NSString *)text type:(HBRedirectType)type
 {
     [self write:text];
 }

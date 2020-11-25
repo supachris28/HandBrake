@@ -9,9 +9,11 @@
 
 namespace HandBrakeWPF.Services.Presets.Interfaces
 {
+    using System;
+    using System.Collections.Generic;
     using System.Collections.ObjectModel;
 
-    using HandBrake.ApplicationServices.Model;
+    using HandBrake.Interop.Model;
 
     using HandBrakeWPF.Services.Presets.Model;
 
@@ -21,9 +23,16 @@ namespace HandBrakeWPF.Services.Presets.Interfaces
     public interface IPresetService
     {
         /// <summary>
+        /// Subscribe to get notifications when a preset is added.
+        /// </summary>
+        event EventHandler PresetCollectionChanged;
+
+        /// <summary>
         /// Gets a Collection of presets.
         /// </summary>
-        ObservableCollection<Preset> Presets { get; }
+        ObservableCollection<IPresetObject> Presets { get; }
+
+        List<Preset> FlatPresetList { get; }
 
         /// <summary>
         /// Gets DefaultPreset.
@@ -34,6 +43,32 @@ namespace HandBrakeWPF.Services.Presets.Interfaces
         /// The load.
         /// </summary>
         void Load();
+
+        /// <summary>
+        /// Force save updates to the preset files. Rarely should need to be called. Only used by the preset manager.
+        /// </summary>
+        void Save();
+
+        /// <summary>
+        /// Save the state of the Preset Treview
+        /// </summary>
+        void SaveCategoryStates();
+
+        /// <summary>
+        /// Load the state of the Preset Treeview.
+        /// </summary>
+        void LoadCategoryStates();
+
+        /// <summary>
+        /// Get a list of preset categories.
+        /// </summary>
+        /// <param name="userCategoriesOnly">
+        /// The user Categories Only.
+        /// </param>
+        /// <returns>
+        /// String list.
+        /// </returns>
+        IList<PresetDisplayCategory> GetPresetCategories(bool userCategoriesOnly);
 
         /// <summary>
         /// Add a new preset to the system
@@ -69,6 +104,8 @@ namespace HandBrakeWPF.Services.Presets.Interfaces
         /// </param>
         void Export(string filename, Preset preset, HBConfiguration configuration);
 
+        void ExportCategories(string filename, IList<PresetDisplayCategory> categories, HBConfiguration configuration);
+
         /// <summary>
         /// Update a preset
         /// </summary>
@@ -83,7 +120,10 @@ namespace HandBrakeWPF.Services.Presets.Interfaces
         /// <param name="preset">
         /// The Preset to remove
         /// </param>
-        void Remove(Preset preset);
+        /// <returns>
+        /// True if it was removed successfully, false otherwise.
+        /// </returns>
+        bool Remove(Preset preset);
 
         /// <summary>
         /// Remove a group of presets by category
@@ -155,5 +195,16 @@ namespace HandBrakeWPF.Services.Presets.Interfaces
         /// The replacement.
         /// </param>
         void Replace(Preset existing, Preset replacement);
+
+        /// <summary>
+        /// Set the selected preset
+        /// </summary>
+        /// <param name="selectedPreset">The preset we want to select.</param>
+        void SetSelected(Preset selectedPreset);
+
+        /// <summary>
+        /// Change the category to which a preset belongs.
+        /// </summary>
+        void ChangePresetCategory(Preset preset, string categoryName);
     }
 }

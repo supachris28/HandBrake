@@ -6,20 +6,18 @@
 
 #import <Foundation/Foundation.h>
 
-@class HBPreset;
-@class HBMutablePreset;
+@class HBPreset, HBMutablePreset;
 @class HBTitle;
+@class HBVideo;
+@class HBRange;
+@class HBPicture;
+@class HBFilters;
+@class HBAudio;
+@class HBSubtitles;
+@class HBChapter;
 
-#import "HBRange.h"
-#import "HBVideo.h"
-#import "HBPicture.h"
-#import "HBFilters.h"
-
-#import "HBAudio.h"
-#import "HBSubtitles.h"
-#import "HBChapter.h"
-
-#import "HBDistributedArray.h"
+#import <HandBrakeKit/HBPresetCoding.h>
+#import <HandBrakeKit/HBSecurityAccessToken.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -27,27 +25,13 @@ extern NSString *HBContainerChangedNotification;
 extern NSString *HBChaptersChangedNotification;
 
 /**
- *  A flag to indicate the job's state
- */
-typedef NS_ENUM(NSUInteger, HBJobState){
-    HBJobStateReady,
-    HBJobStateWorking,
-    HBJobStateCompleted,
-    HBJobStateCanceled, 
-    HBJobStateFailed
-};
-
-/**
  * HBJob
  */
-@interface HBJob : NSObject <NSSecureCoding, NSCopying, HBPresetCoding, HBUniqueObject>
+@interface HBJob : NSObject <NSSecureCoding, NSCopying, HBPresetCoding, HBSecurityScope>
 
 - (instancetype)initWithTitle:(HBTitle *)title andPreset:(HBPreset *)preset;
 
 - (void)applyPreset:(HBPreset *)preset;
-
-/// Current state of the job.
-@property (nonatomic, readwrite) HBJobState state;
 
 @property (nonatomic, readwrite, weak, nullable) HBTitle *title;
 @property (nonatomic, readonly) int titleIdx;
@@ -70,8 +54,10 @@ typedef NS_ENUM(NSUInteger, HBJobState){
 @property (nonatomic, readwrite) int container;
 @property (nonatomic, readwrite) int angle;
 
+// Container options
 @property (nonatomic, readwrite) BOOL mp4HttpOptimize;
 @property (nonatomic, readwrite) BOOL mp4iPodCompatible;
+@property (nonatomic, readwrite) BOOL alignAVStart;
 
 @property (nonatomic, readonly) HBRange *range;
 @property (nonatomic, readonly) HBVideo *video;

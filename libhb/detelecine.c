@@ -1,14 +1,14 @@
 /* detelecine.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "hb.h"
-#include "hbffmpeg.h"
+#include "handbrake/handbrake.h"
+#include "handbrake/hbffmpeg.h"
 
 /*
  *
@@ -92,6 +92,9 @@ struct hb_filter_private_s
     struct pullup_context * pullup_ctx;
     int                     pullup_fakecount;
     int                     pullup_skipflag;
+
+    hb_filter_init_t        input;
+    hb_filter_init_t        output;
 };
 
 static int hb_detelecine_init( hb_filter_object_t * filter,
@@ -821,23 +824,33 @@ void pullup_flush_fields( struct pullup_context * c )
 static int hb_detelecine_init( hb_filter_object_t * filter,
                                hb_filter_init_t * init )
 {
-    filter->private_data = calloc( sizeof(struct hb_filter_private_s), 1 );
-    hb_filter_private_t * pv = filter->private_data;
+    filter->private_data = calloc(sizeof(struct hb_filter_private_s), 1);
 
+    hb_filter_private_t   * pv = filter->private_data;
     struct pullup_context * ctx;
+
+    pv->input      = *init;
     pv->pullup_ctx = ctx = pullup_alloc_context();
 
-    ctx->junk_left = ctx->junk_right  = 1;
-    ctx->junk_top  = ctx->junk_bottom = 4;
+    // "Skip" array [top, bottom, left, right]
+    int top, bottom, left, right;
+
+    left = right = ctx->junk_left = ctx->junk_right  = 1;
+    top = bottom = ctx->junk_top  = ctx->junk_bottom = 4;
     ctx->strict_breaks = -1;
     ctx->metric_plane  = 0;
     ctx->parity = -1;
-    
-    // "Skip" array [top, bottom, left, right]
-    hb_dict_extract_int(&ctx->junk_top, filter->settings, "skip-top");
-    hb_dict_extract_int(&ctx->junk_bottom, filter->settings, "skip-bottom");
-    hb_dict_extract_int(&ctx->junk_left, filter->settings, "skip-left");
-    hb_dict_extract_int(&ctx->junk_right, filter->settings, "skip-right");
+
+    hb_dict_extract_int(&top,    filter->settings, "skip-top");
+    hb_dict_extract_int(&bottom, filter->settings, "skip-bottom");
+    hb_dict_extract_int(&left,   filter->settings, "skip-left");
+    hb_dict_extract_int(&right,  filter->settings, "skip-right");
+    // Enforce safety zones
+    ctx->junk_top    = top    > ctx->junk_top    ? top    : ctx->junk_top;
+    ctx->junk_bottom = bottom > ctx->junk_bottom ? bottom : ctx->junk_bottom;
+    ctx->junk_left   = left   > ctx->junk_left   ? left   : ctx->junk_left;
+    ctx->junk_right  = right  > ctx->junk_right  ? right  : ctx->junk_right;
+
     hb_dict_extract_int(&ctx->strict_breaks, filter->settings, "strict-breaks");
     hb_dict_extract_int(&ctx->metric_plane, filter->settings, "plane");
     hb_dict_extract_int(&ctx->parity, filter->settings, "parity");
@@ -877,6 +890,7 @@ static int hb_detelecine_init( hb_filter_object_t * filter,
     pv->pullup_skipflag = 0;
 
     init->job->use_detelecine = 1;
+    pv->output = *init;
 
     return 0;
 }
@@ -1017,7 +1031,11 @@ static int hb_detelecine_work( hb_filter_object_t * filter,
         pullup_pack_frame( ctx, frame );
     }
 
-    out = hb_video_buffer_init( in->f.width, in->f.height );
+    out = hb_frame_buffer_init(pv->output.pix_fmt, in->f.width, in->f.height);
+    out->f.color_prim     = pv->output.color_prim;
+    out->f.color_transfer = pv->output.color_transfer;
+    out->f.color_matrix   = pv->output.color_matrix;
+    out->f.color_range    = pv->output.color_range ;
 
     /* Copy pullup frame buffer into output buffer */
     memcpy( out->plane[0].data, frame->buffer->planes[0], frame->buffer->size[0] );

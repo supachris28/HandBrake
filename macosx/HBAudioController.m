@@ -6,13 +6,14 @@
 
 #import "HBAudioController.h"
 #import "HBAudioDefaultsController.h"
+#import "HBTrackTitleViewController.h"
 
-@import HandBrakeKit.HBAudio;
-@import HandBrakeKit.HBAudioDefaults;
+@import HandBrakeKit;
 
 @interface HBAudioController ()
 
 @property (nonatomic, readwrite, strong) HBAudioDefaultsController *defaultsController;
+@property (nonatomic, weak) IBOutlet NSTableView *table;
 
 @end
 
@@ -39,6 +40,17 @@
     [self.audio removeAll];
 }
 
+- (IBAction)showAdditionalSettingsPopOver:(id)sender
+{
+    HBTrackTitleViewController *controller = [[HBTrackTitleViewController alloc] init];
+    NSInteger index = [self.table rowForView:sender];
+    if (index != -1)
+    {
+        controller.track = [self.audio objectInTracksAtIndex:index];
+        [self presentViewController:controller asPopoverRelativeToRect:[sender bounds] ofView:sender preferredEdge:NSRectEdgeMinX behavior:NSPopoverBehaviorTransient];
+    }
+}
+
 #pragma mark - Defaults
 
 - (IBAction)showSettingsSheet:(id)sender
@@ -46,22 +58,13 @@
     HBAudioDefaults *defaults = [self.audio.defaults copy];
     self.defaultsController = [[HBAudioDefaultsController alloc] initWithSettings:defaults];
 
-	[NSApp beginSheet:self.defaultsController.window
-       modalForWindow:self.view.window
-        modalDelegate:self
-       didEndSelector:@selector(sheetDidEnd:returnCode:contextInfo:)
-          contextInfo:(void *)CFBridgingRetain(defaults)];
-}
-
-- (void)sheetDidEnd:(NSWindow *)sheet returnCode:(NSInteger)returnCode contextInfo:(void *)contextInfo
-{
-    HBAudioDefaults *defaults = (HBAudioDefaults *)CFBridgingRelease(contextInfo);
-
-    if (returnCode == NSModalResponseOK)
-    {
-        self.audio.defaults = defaults;
-    }
-    self.defaultsController = nil;
+    [self.view.window beginSheet:self.defaultsController.window completionHandler:^(NSModalResponse returnCode) {
+        if (returnCode == NSModalResponseOK)
+        {
+            self.audio.defaults = defaults;
+        }
+        self.defaultsController = nil;
+    }];
 }
 
 - (IBAction)reloadDefaults:(id)sender

@@ -9,20 +9,19 @@
 
 namespace HandBrakeWPF.Model.Audio
 {
-    using System.ComponentModel.DataAnnotations;
+    using HandBrake.Interop.Attributes;
+
+    using HandBrakeWPF.Properties;
 
     /// <summary>
     /// The audio behaviours.
     /// </summary>
     public enum AudioTrackDefaultsMode
     {
-        [Display(Name = "Default")]
-        None = 0,
+        [DisplayName(typeof(Resources), "AudioBehaviourModes_FirstTrack")]
+        FirstTrack = 0,
 
-        [Display(Name = "Use First Track as template")]
-        FirstTrack,
-
-        [Display(Name = "Use All Tracks as templates")]
+        [DisplayName(typeof(Resources), "AudioBehaviourModes_AllTracks")]
         AllTracks,
     }
 }

@@ -9,21 +9,25 @@
 
 namespace HandBrakeWPF.ViewModels
 {
+    using System;
     using System.Collections.Generic;
-    using System.ComponentModel;
     using System.IO;
     using System.Linq;
+    using System.Runtime.CompilerServices;
+    using System.Windows;
 
     using Caliburn.Micro;
 
-    using HandBrake.ApplicationServices.Utilities;
+    using HandBrake.Interop.Utilities;
 
+    using HandBrakeWPF.EventArgs;
     using HandBrakeWPF.Model.Subtitles;
     using HandBrakeWPF.Properties;
+    using HandBrakeWPF.Services.Interfaces;
     using HandBrakeWPF.Services.Presets.Model;
     using HandBrakeWPF.Services.Scan.Model;
-    using HandBrakeWPF.Utilities;
     using HandBrakeWPF.ViewModels.Interfaces;
+    using HandBrakeWPF.Views;
 
     using Microsoft.Win32;
 
@@ -37,11 +41,12 @@ namespace HandBrakeWPF.ViewModels
     /// </summary>
     public class SubtitlesViewModel : ViewModelBase, ISubtitlesViewModel
     {
+        private readonly IErrorService errorService;
         private readonly IWindowManager windowManager;
 
         #region Constants and Fields
 
-        private readonly Subtitle ForeignAudioSearchTrack;
+        private readonly Subtitle foreignAudioSearchTrack;
         private IList<Subtitle> sourceTracks;
 
         #endregion
@@ -51,11 +56,15 @@ namespace HandBrakeWPF.ViewModels
         /// <summary>
         /// Initializes a new instance of the <see cref="HandBrakeWPF.ViewModels.SubtitlesViewModel"/> class.
         /// </summary>
+        /// <param name="errorService">
+        /// The Error Service
+        /// </param>
         /// <param name="windowManager">
         /// The window Manager.
         /// </param>
-        public SubtitlesViewModel(IWindowManager windowManager)
+        public SubtitlesViewModel(IErrorService errorService, IWindowManager windowManager)
         {
+            this.errorService = errorService;
             this.windowManager = windowManager;
             this.SubtitleDefaultsViewModel = new SubtitlesDefaultsViewModel();
             this.Task = new EncodeTask();
@@ -63,11 +72,13 @@ namespace HandBrakeWPF.ViewModels
             this.Langauges = LanguageUtilities.MapLanguages().Keys;
             this.CharacterCodes = CharCodesUtilities.GetCharacterCodes();
 
-            this.ForeignAudioSearchTrack = new Subtitle { SubtitleType = SubtitleType.ForeignAudioSearch, Language = "Foreign Audio Search (Bitmap)" };
-            this.SourceTracks = new List<Subtitle> { this.ForeignAudioSearchTrack };
+            this.foreignAudioSearchTrack = new Subtitle { SubtitleType = SubtitleType.ForeignAudioSearch, Language = Resources.SubtitleViewModel_ForeignAudioSearch };
+            this.SourceTracks = new List<Subtitle> { this.foreignAudioSearchTrack };
         }
 
         #endregion
+
+        public event EventHandler<TabStatusEventArgs> TabStatusChanged;
 
         #region Properties
 
@@ -141,6 +152,14 @@ namespace HandBrakeWPF.ViewModels
             }
         }
 
+        public bool IsBurnableOnly
+        {
+            get
+            {
+                return this.Task.OutputFormat == OutputFormat.WebM;
+            }
+        }
+
         #endregion
 
         #region Public Methods
@@ -180,14 +199,7 @@ namespace HandBrakeWPF.ViewModels
         /// </summary>
         public void AddAllRemainingForSelectedLanguages()
         {
-            // Translate to Iso Codes
-            List<string> iso6392Codes = this.SubtitleBehaviours.SelectedLangauges.Contains(Constants.Any)
-                                            ? LanguageUtilities.GetIsoCodes()
-                                            : LanguageUtilities.GetLanguageCodes(
-                                                this.SubtitleBehaviours.SelectedLangauges.ToArray());
-                                 
-            List<Subtitle> availableTracks =
-                this.SourceTracks.Where(subtitle => iso6392Codes.Contains(subtitle.LanguageCodeClean)).ToList();
+            List<Subtitle> availableTracks = this.GetSelectedLanguagesTracks();
 
             foreach (Subtitle subtitle in this.SourceTitlesSubset(availableTracks))
             {
@@ -200,9 +212,10 @@ namespace HandBrakeWPF.ViewModels
         /// </summary>
         public void AddFirstForSelectedLanguages()
         {
+            bool anyLanguageSelected = this.SubtitleBehaviours.SelectedLangauges.Contains(Constants.Any);
             foreach (Subtitle sourceTrack in this.GetSelectedLanguagesTracks())
             {
-                // Step 2: Check if the track list already contrains this track
+                // Step 2: Check if the track list already contains this track
                 bool found = this.Task.SubtitleTracks.Any(track => Equals(track.SourceTrack, sourceTrack));
                 if (!found)
                 {
@@ -225,6 +238,12 @@ namespace HandBrakeWPF.ViewModels
 
                     // If it doesn't, add it.
                     this.Add(sourceTrack);
+
+                    // If we are using "(Any)" then break here. We only add the first track in this instance.
+                    if (anyLanguageSelected)
+                    {
+                        break;
+                    }
                 }
             }
         }
@@ -235,27 +254,32 @@ namespace HandBrakeWPF.ViewModels
         public void Import()
         {
             OpenFileDialog dialog = new OpenFileDialog
+            {
+                Filter = "Subtitle files (*.srt, *.ssa, *.ass)|*.srt;*.ssa;*.ass",
+                CheckFileExists = true,
+                Multiselect = true
+            };
+
+            if (this.Task != null && this.Task.Source != null)
+            {
+                string path = Path.GetDirectoryName(this.Task.Source);
+                if (Directory.Exists(path))
                 {
-                    Filter = "SRT files (*.srt)|*.srt",
-                    CheckFileExists = true,
-                    Multiselect = true
-                };
+                    dialog.InitialDirectory = path;
+                }
+            }
 
             dialog.ShowDialog();
 
-            foreach (var srtFile in dialog.FileNames)
+            this.AddInputSubtitles(dialog.FileNames);
+        }
+
+        public void Import(string[] subtitleFiles)
+        {
+            if (subtitleFiles != null && subtitleFiles.Any())
             {
-                SubtitleTrack track = new SubtitleTrack
-                    {
-                        SrtFileName = Path.GetFileNameWithoutExtension(srtFile),
-                        SrtOffset = 0,
-                        SrtCharCode = "UTF-8",
-                        SrtLang = "English",
-                        SubtitleType = SubtitleType.SRT,
-                        SrtPath = srtFile
-                    };
-                this.Task.SubtitleTracks.Add(track);
-            }
+                this.AddInputSubtitles(subtitleFiles);
+            }        
         }
 
         /// <summary>
@@ -291,6 +315,7 @@ namespace HandBrakeWPF.ViewModels
                 {
                     continue; // Skip the track the user selected.
                 }
+
                 track.Default = false;
             }
 
@@ -311,8 +336,10 @@ namespace HandBrakeWPF.ViewModels
                 {
                     continue; // Skip the track the user selected.
                 }
+
                 track.Burned = false;
             }
+
             this.NotifyOfPropertyChange(() => this.Task);
         }
 
@@ -326,7 +353,7 @@ namespace HandBrakeWPF.ViewModels
             // Add Foreign Audio Scan
             if (this.SubtitleBehaviours.AddForeignAudioScanTrack)
             {
-                this.Add(ForeignAudioSearchTrack);
+                this.Add(foreignAudioSearchTrack);
             }
 
             // Add Track Behaviours
@@ -355,6 +382,7 @@ namespace HandBrakeWPF.ViewModels
                                 break;
                             }
                         }
+
                         break;
                     case SubtitleBurnInBehaviourModes.ForeignAudio:
                         foreach (var track in this.Task.SubtitleTracks)
@@ -368,6 +396,7 @@ namespace HandBrakeWPF.ViewModels
                                 break;
                             }
                         }
+
                         break;
                     case SubtitleBurnInBehaviourModes.FirstTrack:                    
                         foreach (var track in this.Task.SubtitleTracks)
@@ -385,7 +414,8 @@ namespace HandBrakeWPF.ViewModels
                                 track.Burned = true;
                                 this.SetBurnedToFalseForAllExcept(track);
                             }
-                        }                  
+                        }   
+                        
                         break;
                     case SubtitleBurnInBehaviourModes.ForeignAudioPreferred:
                         foreach (var track in this.Task.SubtitleTracks)
@@ -406,7 +436,8 @@ namespace HandBrakeWPF.ViewModels
                                 this.SetBurnedToFalseForAllExcept(track);
                                 break;
                             }
-                        }            
+                        }       
+                        
                         break;
                 }
             }
@@ -423,14 +454,12 @@ namespace HandBrakeWPF.ViewModels
         /// </summary>
         public void ShowSubtitleDefaultsPanel()
         {
-            IPopupWindowViewModel popup = new PopupWindowViewModel(this.SubtitleDefaultsViewModel, ResourcesUI.Preset_SubtitleDefaults_Title, ResourcesUI.SubtitleView_SubtitleDefaultsDescription);
-            if (this.windowManager.ShowDialog(popup) == true)
+            SubtitlesDefaultsView view = new SubtitlesDefaultsView();
+            view.DataContext = this.SubtitleDefaultsViewModel;
+
+            if (view.ShowDialog() == true)
             {
-                // Nothing to do yet, it's by reference. 
-            }
-            else
-            {
-                // Handle other case(s)
+                this.OnTabStatusChanged(null);
             }
         }
 
@@ -440,6 +469,26 @@ namespace HandBrakeWPF.ViewModels
         public void ReloadDefaults()
         {
             this.AutomaticSubtitleSelection();
+        }
+
+        /// <summary>
+        /// Trigger a Notify Property Changed on the Task to force various UI elements to update.
+        /// </summary>
+        public void RefreshTask()
+        {
+            this.NotifyOfPropertyChange(() => this.Task);
+            this.NotifyOfPropertyChange(() => this.IsBurnableOnly);
+
+            if (this.IsBurnableOnly)
+            {
+                foreach (var subtitleTrack in this.Task.SubtitleTracks)
+                {
+                    if (subtitleTrack.Default)
+                    {
+                        subtitleTrack.Default = false;
+                    }
+                }
+            }
         }
 
         #endregion
@@ -478,6 +527,40 @@ namespace HandBrakeWPF.ViewModels
             this.NotifyOfPropertyChange(() => this.Task);
         }
 
+        public bool MatchesPreset(Preset preset)
+        {
+            // Check the default behaviours.
+            if (preset.SubtitleTrackBehaviours.AddClosedCaptions != this.SubtitleBehaviours.AddClosedCaptions)
+            {
+                return false;
+            }
+
+            if (preset.SubtitleTrackBehaviours.AddForeignAudioScanTrack != this.SubtitleBehaviours.AddForeignAudioScanTrack)
+            {
+                return false;
+            }
+
+            if (preset.SubtitleTrackBehaviours.SelectedBehaviour != this.SubtitleBehaviours.SelectedBehaviour)
+            {
+                return false;
+            }
+
+            if (preset.SubtitleTrackBehaviours.SelectedBurnInBehaviour != this.SubtitleBehaviours.SelectedBurnInBehaviour)
+            {
+                return false;
+            }
+
+            foreach (var item in this.SubtitleBehaviours.SelectedLangauges)
+            {
+                if (!preset.SubtitleTrackBehaviours.SelectedLangauges.Contains(item))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         /// <summary>
         /// Setup this window for a new source
         /// </summary>
@@ -496,7 +579,7 @@ namespace HandBrakeWPF.ViewModels
         public void SetSource(Source source, Title title, Preset preset, EncodeTask task)
         {
             this.SourceTracks.Clear();
-            this.SourceTracks.Add(ForeignAudioSearchTrack);
+            this.SourceTracks.Add(foreignAudioSearchTrack);
             foreach (Subtitle subtitle in title.Subtitles)
             {
                 this.SourceTracks.Add(subtitle);
@@ -508,9 +591,51 @@ namespace HandBrakeWPF.ViewModels
             this.AutomaticSubtitleSelection();
         }
 
+        /// <summary>
+        /// Checks the configuration of the subtitles and warns the user about any potential issues.
+        /// </summary>
+        public bool ValidateSubtitles()
+        {
+            var nonBurnedSubtitles = this.Task.SubtitleTracks.Where(subtitleTrack => !subtitleTrack.Burned).ToList();
+
+            if (nonBurnedSubtitles.Count > 0 && this.IsBurnableOnly)
+            {
+                MessageBoxResult result = this.errorService.ShowMessageBox(
+                    Resources.Subtitles_WebmSubtitleIncompatibilityError,
+                    Resources.Subtitles_WebmSubtitleIncompatibilityHeader,
+                    MessageBoxButton.OKCancel,
+                    MessageBoxImage.Warning);
+                if (result == MessageBoxResult.OK)
+                {
+                    foreach (var subtitleTrack in nonBurnedSubtitles)
+                    {
+                        if (!subtitleTrack.Burned)
+                        {
+                            this.Remove(subtitleTrack);
+                        }
+                    }
+                }
+                else if (result == MessageBoxResult.Cancel)
+                {
+                    return false;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         #endregion
 
         #region Methods
+
+        protected virtual void OnTabStatusChanged(TabStatusEventArgs e)
+        {
+            this.TabStatusChanged?.Invoke(this, e);
+        }
 
         /// <summary>
         /// Add a subtitle track.
@@ -534,12 +659,12 @@ namespace HandBrakeWPF.ViewModels
 
             if (source == null)
             {
-                source = ForeignAudioSearchTrack;
+                source = foreignAudioSearchTrack;
             }
 
             SubtitleTrack track = new SubtitleTrack
                                       {
-                                          SubtitleType = SubtitleType.VobSub,
+                                          SubtitleType = source.SubtitleType,
                                           SourceTrack = source,
                                       };
 
@@ -557,6 +682,11 @@ namespace HandBrakeWPF.ViewModels
             // For MP4, PGS Subtitles must be burned in.
             if (!track.Burned && (source.SubtitleType == SubtitleType.PGS) && this.Task != null && this.Task.OutputFormat == OutputFormat.Mp4)
             {
+                if (this.Task.SubtitleTracks.Any(a => a.Burned))
+                {
+                    return; // We can't add any more burned in tracks.
+                }
+
                 if (track.CanBeBurned)
                 {
                     track.Burned = true;
@@ -577,21 +707,28 @@ namespace HandBrakeWPF.ViewModels
         /// <returns>
         /// A list of source subtitle tracks.
         /// </returns>
-        private IEnumerable<Subtitle> GetSelectedLanguagesTracks()
+        private List<Subtitle> GetSelectedLanguagesTracks()
         {
-            List<Subtitle> trackList = new List<Subtitle>();
-
-            List<string> isoCodes = this.SubtitleBehaviours.SelectedLangauges.Contains(Constants.Any)
-                                            ? LanguageUtilities.GetIsoCodes()
-                                            : LanguageUtilities.GetLanguageCodes(
-                                                this.SubtitleBehaviours.SelectedLangauges.ToArray());
-
-            foreach (string code in isoCodes)
+            // Translate to Iso Codes
+            List<string> iso6392Codes = new List<string>();
+            if (this.SubtitleBehaviours.SelectedLangauges.Contains(Constants.Any))
             {
-                trackList.AddRange(this.SourceTracks.Where(source => source.LanguageCode == code));
+                iso6392Codes = LanguageUtilities.GetIsoCodes();
+                iso6392Codes = LanguageUtilities.OrderIsoCodes(iso6392Codes, this.SubtitleBehaviours.SelectedLangauges);
+            }
+            else
+            {
+                iso6392Codes = LanguageUtilities.GetLanguageCodes(this.SubtitleBehaviours.SelectedLangauges.ToArray());
             }
 
-            return trackList;
+
+            List<Subtitle> orderedSubtitles = new List<Subtitle>();
+            foreach (string code in iso6392Codes)
+            {
+                orderedSubtitles.AddRange(this.SourceTracks.Where(subtitle => subtitle.LanguageCodeClean == code ));
+            }
+
+            return orderedSubtitles;
         }
 
         /// <summary>
@@ -602,7 +739,9 @@ namespace HandBrakeWPF.ViewModels
         /// </returns>
         private string GetPreferredSubtitleTrackLanguage()
         {
-            return this.SubtitleBehaviours.SelectedLangauges.FirstOrDefault(w => w != Constants.Any);
+            string langName = this.SubtitleBehaviours.SelectedLangauges.FirstOrDefault(w => w != Constants.Any);
+            string langCode = LanguageUtilities.GetLanguageCode(langName);
+            return langCode;
         }
 
         /// <summary>
@@ -619,6 +758,28 @@ namespace HandBrakeWPF.ViewModels
             return subtitles != null
                        ? subtitles.Where(subtitle => !this.Task.SubtitleTracks.Any(track => Equals(track.SourceTrack, subtitle))).ToList()
                        : this.SourceTracks.Where(subtitle => !this.Task.SubtitleTracks.Any(track => Equals(track.SourceTrack, subtitle))).ToList();
+        }
+
+        private void AddInputSubtitles(string[] filenames)
+        {
+            foreach (var srtFile in filenames)
+            {
+                if (!File.Exists(srtFile))
+                {
+                    continue;
+                }
+
+                SubtitleTrack track = new SubtitleTrack
+                                          {
+                                              SrtFileName = Path.GetFileNameWithoutExtension(srtFile),
+                                              SrtOffset = 0,
+                                              SrtCharCode = "UTF-8",
+                                              SrtLang = "English",
+                                              SubtitleType = SubtitleType.SRT,
+                                              SrtPath = srtFile
+                                          };
+                this.Task.SubtitleTracks.Add(track);
+            }
         }
 
         #endregion

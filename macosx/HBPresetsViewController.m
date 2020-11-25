@@ -5,12 +5,14 @@
  It may be used under the terms of the GNU General Public License. */
 
 #import "HBPresetsViewController.h"
+#import "HBAddCategoryController.h"
+#import "HBFilePromiseProvider.h"
+#import "NSArray+HBAdditions.h"
 
-@import HandBrakeKit.HBPresetsManager;
-@import HandBrakeKit.HBPreset;
+@import HandBrakeKit;
 
-// drag and drop pasteboard type
-#define kHandBrakePresetPBoardType @"handBrakePresetPBoardType"
+// KVO Context
+static void *HBPresetsViewControllerContext = &HBPresetsViewControllerContext;
 
 @interface HBPresetCellView : NSTableCellView
 @end
@@ -30,7 +32,7 @@
         }
         else
         {
-            self.textField.textColor = [NSColor blueColor];
+            self.textField.textColor = [NSColor systemBlueColor];
         }
     }
     else
@@ -41,28 +43,29 @@
 
 @end
 
-@interface HBPresetsViewController () <NSOutlineViewDelegate>
+@interface HBPresetsViewController () <NSOutlineViewDelegate, NSOutlineViewDataSource, NSFilePromiseProviderDelegate>
 
 @property (nonatomic, strong) HBPresetsManager *presets;
+@property (nonatomic, readwrite) HBPreset *selectedPresetInternal;
 @property (nonatomic, unsafe_unretained) IBOutlet NSTreeController *treeController;
+@property (nonatomic, weak) IBOutlet NSSegmentedControl *actionsControl;
 
 /**
  *  Helper var for drag & drop
  */
-@property (nonatomic, strong) NSArray *dragNodesArray;
+@property (nonatomic, strong, nullable) NSArray *dragNodesArray;
 
 /**
- *  The status (expanded or not) of the folders.
+ *  The status (expanded or not) of the categories.
  */
 @property (nonatomic, strong) NSMutableArray *expandedNodes;
 
-@property (unsafe_unretained) IBOutlet NSOutlineView *outlineView;
+@property (nonatomic, unsafe_unretained) IBOutlet NSOutlineView *outlineView;
+
 
 @end
 
 @implementation HBPresetsViewController
-
-@synthesize enabled = _enabled;
 
 - (instancetype)initWithPresetManager:(HBPresetsManager *)presetManager
 {
@@ -70,116 +73,229 @@
     if (self)
     {
         _presets = presetManager;
-        _expandedNodes = [[NSArray arrayWithArray:[[NSUserDefaults standardUserDefaults]
+        _selectedPresetInternal = presetManager.defaultPreset;
+        _expandedNodes = [[NSArray arrayWithArray:[NSUserDefaults.standardUserDefaults
                                                    objectForKey:@"HBPreviewViewExpandedStatus"]] mutableCopy];
     }
     return self;
 }
 
-- (void)loadView
+- (void)viewDidLoad
 {
-    [super loadView];
+    [super viewDidLoad];
+
+    if (NSAppKitVersionNumber >= NSAppKitVersionNumber10_10 && NSAppKitVersionNumber < 1651)
+    {
+        self.view.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+    }
 
     // drag and drop support
-	[self.outlineView registerForDraggedTypes:@[kHandBrakePresetPBoardType]];
+	[self.outlineView registerForDraggedTypes:@[kHandBrakeInternalPBoardType, (NSString *)kUTTypeFileURL]];
+    [self.outlineView setDraggingSourceOperationMask:NSDragOperationCopy forLocal:NO];
+    [self.outlineView setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
 
     // Re-expand the items
-    [self expandNodes:[self.treeController.arrangedObjects childNodes]];
+    [self expandNodes:self.treeController.arrangedObjects.childNodes];
 
-    [self.treeController setSelectionIndexPath:[self.presets indexPathOfPreset:self.presets.defaultPreset]];
+    [self.treeController setSelectionIndexPath:[self.presets indexPathOfPreset:self.selectedPreset]];
+    [self.treeController addObserver:self forKeyPath:@"selectedObjects" options:NSKeyValueObservingOptionNew context:HBPresetsViewControllerContext];
+
+    [self.actionsControl setEnabled:self.enabled forSegment:0];
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context
+{
+    if (context == HBPresetsViewControllerContext)
+    {
+        HBPreset *selectedNode = self.treeController.selectedObjects.firstObject;
+        if (selectedNode && selectedNode.isLeaf && selectedNode != self.selectedPresetInternal)
+        {
+            self.selectedPresetInternal = selectedNode;
+            [self.delegate selectionDidChange];
+        }
+        [self.actionsControl setEnabled:selectedNode != nil forSegment:1];
+    }
+    else
+    {
+        [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+    }
 }
 
 - (BOOL)validateUserInterfaceItem:(id < NSValidatedUserInterfaceItem >)anItem
 {
     SEL action = anItem.action;
 
-    if (action == @selector(exportPreset:))
+    if (action == @selector(exportPreset:) ||
+        action == @selector(deletePreset:))
     {
-        if (![[self.treeController selectedObjects] firstObject])
+        if (!self.treeController.selectedObjects.firstObject)
         {
             return NO;
         }
     }
     if (action == @selector(setDefault:))
     {
-        if (![[[self.treeController selectedObjects] firstObject] isLeaf])
+        if (![self.treeController.selectedObjects.firstObject isLeaf])
         {
             return NO;
         }
     }
 
-
     return YES;
 }
 
-#pragma mark -
-#pragma mark Import Export Preset(s)
-
-- (IBAction)exportPreset:(id)sender
+- (void)setEnabled:(BOOL)enabled
 {
-    // Find the current selection, it can be a folder too.
-    HBPreset *selectedPreset = [[[self.treeController selectedObjects] firstObject] copy];
+    _enabled = enabled;
+    [self.actionsControl setEnabled:enabled forSegment:0];
+}
 
-    // Open a panel to let the user choose where and how to save the export file
-    NSSavePanel *panel = [NSSavePanel savePanel];
-    panel.title = NSLocalizedString(@"Export presets", nil);
+#pragma mark - Import Export Preset(s)
 
-    // We get the current file name and path from the destination field here
-    NSURL *defaultExportDirectory = [[NSURL fileURLWithPath:NSHomeDirectory()] URLByAppendingPathComponent:@"Desktop"];
-    panel.directoryURL = defaultExportDirectory;
-    panel.nameFieldStringValue = [NSString stringWithFormat:@"%@.json", selectedPreset.name];
+- (nonnull NSString *)fileNameForPreset:(HBPreset *)preset
+{
+    NSString *name = preset.name == nil || preset.name.length == 0 ? @"Unnamed preset" : preset.name;
+    return [name stringByAppendingPathExtension:@"json"];
+}
+
+- (nonnull NSURL *)lastPresetExportDirectoryURL
+{
+    NSURL *defaultExportDirectory = [[NSURL fileURLWithPath:NSHomeDirectory()] URLByAppendingPathComponent:@"Desktop" isDirectory:YES];
+    NSURL *lastPresetExportDirectoryURL = [NSUserDefaults.standardUserDefaults URLForKey:@"LastPresetExportDirectoryURL"];
+    return lastPresetExportDirectoryURL ? lastPresetExportDirectoryURL : defaultExportDirectory;
+}
+
+- (void)doExportPresets:(NSArray<HBPreset *> *)presets
+{
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.title = NSLocalizedString(@"Export presets", @"Export presets save panel title");
+    panel.directoryURL = self.lastPresetExportDirectoryURL;
+    panel.canChooseFiles = NO;
+    panel.canChooseDirectories = YES;
+    panel.allowsMultipleSelection = NO;
+    panel.prompt = NSLocalizedString(@"Save", @"Export presets panel prompt");
 
     [panel beginWithCompletionHandler:^(NSInteger result)
      {
-         if (result == NSFileHandlingPanelOKButton)
+        if (result == NSModalResponseOK)
+        {
+            [NSUserDefaults.standardUserDefaults setURL:panel.URL forKey:@"LastPresetExportDirectoryURL"];
+
+            for (HBPreset *preset in presets)
+            {
+                NSError *error = NULL;
+                NSString *fileName = [self fileNameForPreset:preset];
+                NSURL *url = [panel.URL URLByAppendingPathComponent:fileName];
+                BOOL success = [preset writeToURL:url atomically:YES removeRoot:NO error:&error];
+                if (success == NO)
+                {
+                    [self presentError:error];
+                }
+            }
+        }
+    }];
+}
+
+- (void)doExportPreset:(HBPreset *)preset
+{
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    panel.title = NSLocalizedString(@"Export preset", @"Export presets save panel title");
+    panel.directoryURL = self.lastPresetExportDirectoryURL;
+    panel.nameFieldStringValue = [self fileNameForPreset:preset];
+
+    [panel beginWithCompletionHandler:^(NSInteger result)
+     {
+         if (result == NSModalResponseOK)
          {
              NSURL *presetExportDirectory = [panel.URL URLByDeletingLastPathComponent];
-             [[NSUserDefaults standardUserDefaults] setURL:presetExportDirectory forKey:@"LastPresetExportDirectoryURL"];
+             [NSUserDefaults.standardUserDefaults setURL:presetExportDirectory forKey:@"LastPresetExportDirectoryURL"];
 
-             [selectedPreset writeToURL:panel.URL atomically:YES format:HBPresetFormatJson removeRoot:NO];
+             NSError *error = NULL;
+             BOOL success = [preset writeToURL:panel.URL atomically:YES removeRoot:NO error:&error];
+             if (success == NO)
+             {
+                 [self presentError:error];
+             }
          }
      }];
+}
+
+- (IBAction)exportPreset:(id)sender
+{
+    NSArray<HBPreset *> *selectedPresets = self.treeController.selectedObjects;
+    if (selectedPresets.count == 1)
+    {
+        [self doExportPreset:selectedPresets.firstObject];
+    }
+    else if (selectedPresets.count > 1)
+    {
+        [self doExportPresets:selectedPresets];
+    }
+}
+
+- (void)doImportPreset:(NSArray<NSURL *> *)URLs atIndexPath:(nullable NSIndexPath *)indexPath
+{
+    if (indexPath == nil)
+    {
+        for (HBPreset *preset in self.presets.root.children)
+        {
+            if (preset.isBuiltIn == NO && preset.isLeaf == NO)
+            {
+                indexPath = [[self.presets indexPathOfPreset:preset] indexPathByAddingIndex:0];
+            }
+        }
+
+        if (indexPath == nil)
+        {
+            indexPath = [NSIndexPath indexPathWithIndex:self.presets.root.countOfChildren];
+        }
+    }
+
+    for (NSURL *url in URLs)
+    {
+        NSError *error;
+        HBPreset *preset = [[HBPreset alloc] initWithContentsOfURL:url error:&error];
+
+        if (preset)
+        {
+            for (HBPreset *child in preset.children)
+            {
+                [self.treeController insertObject:child atArrangedObjectIndexPath:indexPath];
+            }
+            [self.presets savePresets];
+        }
+        else
+        {
+            [self presentError:error];
+        }
+    }
 }
 
 - (IBAction)importPreset:(id)sender
 {
     NSOpenPanel *panel = [NSOpenPanel openPanel];
-    panel.title = NSLocalizedString(@"Import presets", nil);
+    panel.title = NSLocalizedString(@"Import presets", @"Import preset open panel title");
     panel.allowsMultipleSelection = YES;
     panel.canChooseFiles = YES;
     panel.canChooseDirectories = NO;
     panel.allowedFileTypes = @[@"plist", @"xml", @"json"];
 
-    if ([[NSUserDefaults standardUserDefaults] URLForKey:@"LastPresetImportDirectoryURL"])
+    if ([NSUserDefaults.standardUserDefaults URLForKey:@"LastPresetImportDirectoryURL"])
     {
-        panel.directoryURL = [[NSUserDefaults standardUserDefaults] URLForKey:@"LastPresetImportDirectoryURL"];
+        panel.directoryURL = [NSUserDefaults.standardUserDefaults URLForKey:@"LastPresetImportDirectoryURL"];
     }
     else
     {
-        panel.directoryURL = [[NSURL fileURLWithPath:NSHomeDirectory()] URLByAppendingPathComponent:@"Desktop"];
+        panel.directoryURL = [[NSURL fileURLWithPath:NSHomeDirectory()] URLByAppendingPathComponent:@"Desktop" isDirectory:YES];
     }
 
     [panel beginWithCompletionHandler:^(NSInteger result)
      {
-         [[NSUserDefaults standardUserDefaults] setURL:panel.directoryURL forKey:@"LastPresetImportDirectoryURL"];
+         [NSUserDefaults.standardUserDefaults setURL:panel.directoryURL forKey:@"LastPresetImportDirectoryURL"];
 
-         if (result == NSFileHandlingPanelOKButton)
+         if (result == NSModalResponseOK)
          {
-             for (NSURL *url in panel.URLs)
-             {
-                 NSError *error;
-                 HBPreset *import = [[HBPreset alloc] initWithContentsOfURL:url error:&error];
-
-                 if (import == nil)
-                 {
-                     [self presentError:error];
-                 }
-
-                 for (HBPreset *child in import.children)
-                 {
-                     [self.presets addPreset:child];
-                 }
-             }
+             [self doImportPreset:panel.URLs atIndexPath:nil];
          }
      }];
 }
@@ -188,9 +304,29 @@
 
 - (IBAction)clicked:(id)sender
 {
-    if (self.delegate && [[self.treeController.selectedObjects firstObject] isLeaf])
+    if (self.delegate && [self.treeController.selectedObjects.firstObject isLeaf])
     {
         [self.delegate selectionDidChange];
+    }
+}
+
+- (IBAction)renamed:(id)sender
+{
+    if (self.delegate && [self.treeController.selectedObjects.firstObject isLeaf])
+    {
+        [self.delegate selectionDidChange];
+    }
+}
+
+- (IBAction)segmentedActions:(NSSegmentedControl *)sender
+{
+    if (sender.selectedSegment == 0)
+    {
+        [self addNewPreset:self];
+    }
+    else
+    {
+        [self deletePreset:self];
     }
 }
 
@@ -204,52 +340,74 @@
 
 - (IBAction)deletePreset:(id)sender
 {
-    if ([self.treeController canRemove])
+    if (self.treeController.canRemove)
     {
-        // Save the current selection path and apply it again after the deletion
-        NSIndexPath *currentSelection = [self.treeController selectionIndexPath];
-        /* Alert user before deleting preset */
-        NSAlert *alert = [NSAlert alertWithMessageText:NSLocalizedString(@"Are you sure you want to permanently delete the selected preset?", nil)
-                                         defaultButton:NSLocalizedString(@"Delete Preset", nil)
-                                       alternateButton:NSLocalizedString(@"Cancel", nil)
-                                           otherButton:nil
-                             informativeTextWithFormat:NSLocalizedString(@"You can't undo this action.", nil)];
-        [alert setAlertStyle:NSCriticalAlertStyle];
+        // Alert user before deleting preset
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.alertStyle = NSAlertStyleCritical;
+        alert.informativeText = NSLocalizedString(@"You can't undo this action.", @"Delete preset alert -> informative text");
+
+        if (self.treeController.selectedObjects.count > 1)
+        {
+            alert.messageText = NSLocalizedString(@"Are you sure you want to permanently delete the selected presets?", @"Delete preset alert -> message");
+            [alert addButtonWithTitle:NSLocalizedString(@"Delete Presets", @"Delete preset alert -> first button")];
+        }
+        else
+        {
+            alert.messageText = NSLocalizedString(@"Are you sure you want to permanently delete the selected preset?", @"Delete preset alert -> message");
+            [alert addButtonWithTitle:NSLocalizedString(@"Delete Preset", @"Delete preset alert -> first button")];
+        }
+
+#if defined(__MAC_11_0)
+        if (@available(macOS 11, *))
+        {
+            alert.buttons.lastObject.hasDestructiveAction = true;
+        }
+#endif
+        [alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"Delete preset alert -> second button")];
 
         NSInteger status = [alert runModal];
-
-        if (status == NSAlertDefaultReturn)
+        if (status == NSAlertFirstButtonReturn)
         {
-            [self.presets deletePresetAtIndexPath:[self.treeController selectionIndexPath]];
+            for (NSIndexPath *indexPath in self.treeController.selectionIndexPaths.reverseObjectEnumerator)
+            {
+                [self.presets deletePresetAtIndexPath:indexPath];
+            }
+            [self setSelection:self.presets.defaultPreset];
         }
-        [self.treeController setSelectionIndexPath:currentSelection];
     }
 }
 
-- (IBAction)insertFolder:(id)sender
+- (IBAction)insertCategory:(id)sender
 {
-    NSIndexPath *selectionIndexPath = [self.treeController selectionIndexPath];
-    if (!selectionIndexPath || [[[self.treeController selectedObjects] firstObject] isBuiltIn])
-    {
-        selectionIndexPath = [NSIndexPath indexPathWithIndex:self.presets.root.children.count];
-    }
+    HBAddCategoryController *addCategoryController = [[HBAddCategoryController alloc] initWithPresetManager:self.presets];
 
-    HBPreset *node = [[HBPreset alloc] initWithFolderName:@"New Folder" builtIn:NO];
-    [self.treeController insertObject:node atArrangedObjectIndexPath:selectionIndexPath];
+    NSModalResponse returnCode = [NSApp runModalForWindow:addCategoryController.window];
+    if (returnCode == NSModalResponseOK)
+    {
+        NSIndexPath *indexPath = [self.presets indexPathOfPreset:addCategoryController.category];
+        [self.treeController setSelectionIndexPath:indexPath];
+    }
 }
 
 - (IBAction)setDefault:(id)sender
 {
-    HBPreset *selectedNode = [[self.treeController selectedObjects] firstObject];
-    if ([[selectedNode valueForKey:@"isLeaf"] boolValue])
+    HBPreset *selectedNode = self.treeController.selectedObjects.firstObject;
+    if (selectedNode.isLeaf)
     {
         self.presets.defaultPreset = selectedNode;
     }
 }
 
-- (void)deselect
+- (void)setSelectedPreset:(HBPreset *)selectedPreset
 {
-    [self.treeController setSelectionIndexPath:nil];
+    _selectedPresetInternal = selectedPreset;
+    [self setSelection:selectedPreset];
+}
+
+- (HBPreset *)selectedPreset
+{
+    return _selectedPresetInternal;
 }
 
 - (void)setSelection:(HBPreset *)preset
@@ -262,25 +420,12 @@
     }
 }
 
-- (HBPreset *)selectedPreset
-{
-    HBPreset *selectedNode = [[self.treeController selectedObjects] firstObject];
-    if ([[selectedNode valueForKey:@"isLeaf"] boolValue])
-    {
-        return selectedNode;
-    }
-    else
-    {
-        return self.presets.defaultPreset;
-    }
-}
-
 - (IBAction)updateBuiltInPresets:(id)sender
 {
     [self.presets generateBuiltInPresets];
 
     // Re-expand the items
-    [self expandNodes:[self.treeController.arrangedObjects childNodes]];
+    [self expandNodes:self.treeController.arrangedObjects.childNodes];
 }
 
 #pragma mark - Expanded node persistence methods
@@ -297,55 +442,59 @@
 
 - (void)outlineViewItemDidExpand:(NSNotification *)notification
 {
-    HBPreset *node = [[[notification userInfo] valueForKey:@"NSObject"] representedObject];
+    HBPreset *node = [notification.userInfo[@"NSObject"] representedObject];
     if (![self.expandedNodes containsObject:@(node.hash)])
     {
         [self.expandedNodes addObject:@(node.hash)];
-        [[NSUserDefaults standardUserDefaults] setObject:self.expandedNodes forKey:@"HBPreviewViewExpandedStatus"];
+        [NSUserDefaults.standardUserDefaults setObject:self.expandedNodes forKey:@"HBPreviewViewExpandedStatus"];
     }
 }
 
 - (void)outlineViewItemDidCollapse:(NSNotification *)notification
 {
-    HBPreset *node = [[[notification userInfo] valueForKey:@"NSObject"] representedObject];
+    HBPreset *node = [notification.userInfo[@"NSObject"] representedObject];
     [self.expandedNodes removeObject:@(node.hash)];
-    [[NSUserDefaults standardUserDefaults] setObject:self.expandedNodes forKey:@"HBPreviewViewExpandedStatus"];
+    [NSUserDefaults.standardUserDefaults setObject:self.expandedNodes forKey:@"HBPreviewViewExpandedStatus"];
 }
 
 #pragma mark - Drag & Drops
 
-/**
- *  draggingSourceOperationMaskForLocal <NSDraggingSource override>
- */
-- (NSDragOperation)draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context
+- (void)outlineView:(NSOutlineView *)outlineView draggingSession:(NSDraggingSession *)session willBeginAtPoint:(NSPoint)screenPoint forItems:(NSArray *)draggedItems
 {
-    return NSDragOperationMove;
+    self.dragNodesArray = draggedItems;
 }
 
-/**
- *  outlineView:writeItems:toPasteboard
- */
-- (BOOL)outlineView:(NSOutlineView *)ov writeItems:(NSArray *)items toPasteboard:(NSPasteboard *)pboard
+- (void)outlineView:(NSOutlineView *)outlineView draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)screenPoint operation:(NSDragOperation)operation
 {
-    // Return no if we are trying to drag a built-in preset
-    for (id item in items) {
-        if ([[item representedObject] isBuiltIn])
-            return NO;
+    self.dragNodesArray = nil;
+}
+
+- (id<NSPasteboardWriting>)outlineView:(NSOutlineView *)outlineView
+               pasteboardWriterForItem:(id)item {
+    if (@available(macOS 10.12, *))
+    {
+        HBFilePromiseProvider *filePromise = [[HBFilePromiseProvider alloc] initWithFileType:@"public.text" delegate:self];
+        filePromise.userInfo = [item representedObject];
+        return filePromise;
     }
-
-    [pboard declareTypes:@[kHandBrakePresetPBoardType] owner:self];
-
-	// keep track of this nodes for drag feedback in "validateDrop"
-	self.dragNodesArray = items;
-
-	return YES;
+    else
+    {
+        return [[NSPasteboardItem alloc] initWithPasteboardPropertyList:@1 ofType:kHandBrakeInternalPBoardType];
+    }
 }
 
-/**
- *	outlineView:validateDrop:proposedItem:proposedChildrenIndex:
- *
- *	This method is used by NSOutlineView to determine a valid drop target.
- */
+- (nonnull NSString *)filePromiseProvider:(nonnull NSFilePromiseProvider *)filePromiseProvider fileNameForType:(nonnull NSString *)fileType
+{
+    return [self fileNameForPreset:filePromiseProvider.userInfo];
+}
+
+- (void)filePromiseProvider:(nonnull NSFilePromiseProvider *)filePromiseProvider writePromiseToURL:(nonnull NSURL *)url completionHandler:(nonnull void (^)(NSError * _Nullable))completionHandler
+{
+    NSError *error = NULL;
+    [filePromiseProvider.userInfo writeToURL:url atomically:YES removeRoot:NO error:&error];
+    completionHandler(error);
+}
+
  - (NSDragOperation)outlineView:(NSOutlineView *)ov
                   validateDrop:(id <NSDraggingInfo>)info
                   proposedItem:(id)item
@@ -353,22 +502,23 @@
 {
 	NSDragOperation result = NSDragOperationNone;
 
-	if (!item)
-	{
-        if (index == 0)
+    if (info.draggingSource == nil)
+    {
+        if ([[item representedObject] isBuiltIn] ||
+            ([[item representedObject] isLeaf] && index == -1))
         {
-            // don't allow to drop on top
             result = NSDragOperationNone;
         }
         else
         {
-            // no item to drop on
-            result = NSDragOperationGeneric;
+            result = NSDragOperationCopy;
         }
-	}
-	else
-	{
-        if (index == -1 || [[item representedObject] isBuiltIn] || [self.dragNodesArray containsObject:item])
+    }
+    else if ([self.dragNodesArray HB_allSatisfy:^BOOL(id  _Nonnull object) { return [[object representedObject] isBuiltIn] == NO; }])
+    {
+        if ([[item representedObject] isBuiltIn] ||
+            ([[item representedObject] isLeaf] && index == -1) ||
+            [self.dragNodesArray containsObject:item])
         {
             // don't allow dropping on a child
             result = NSDragOperationNone;
@@ -378,16 +528,11 @@
             // drop location is a container
             result = NSDragOperationMove;
         }
-	}
+    }
 
 	return result;
 }
 
-/**
- *	handleInternalDrops:pboard:withIndexPath:
- *
- *	The user is doing an intra-app drag within the outline view.
- */
 - (void)handleInternalDrops:(NSPasteboard *)pboard withIndexPath:(NSIndexPath *)indexPath
 {
 	// user is doing an intra app drag within the outline view:
@@ -395,7 +540,7 @@
 
 	// move the items to their new place (we do this backwards, otherwise they will end up in reverse order)
 	NSInteger idx;
-	for (idx = ([newNodes count] - 1); idx >= 0; idx--)
+	for (idx = newNodes.count - 1; idx >= 0; idx--)
 	{
 		[self.treeController moveNode:newNodes[idx] toIndexPath:indexPath];
 
@@ -409,53 +554,58 @@
 
 	// keep the moved nodes selected
 	NSMutableArray *indexPathList = [NSMutableArray array];
-    for (NSUInteger i = 0; i < [newNodes count]; i++)
-	{
-		[indexPathList addObject:[newNodes[i] indexPath]];
-	}
-	[self.treeController setSelectionIndexPaths: indexPathList];
+    for (id node in newNodes)
+    {
+        [indexPathList addObject:[node indexPath]];
+    }
+	[self.treeController setSelectionIndexPaths:indexPathList];
 }
 
-/**
- *	outlineView:acceptDrop:item:childIndex
- *
- *	This method is called when the mouse is released over an outline view that previously decided to allow a drop
- *	via the validateDrop method. The data source should incorporate the data from the dragging pasteboard at this time.
- *	'index' is the location to insert the data as a child of 'item', and are the values previously set in the validateDrop: method.
- *
- */
+- (void)handleExternalDrops:(NSPasteboard *)pboard withIndexPath:(NSIndexPath *)indexPath
+{
+    NSArray<NSURL *> *URLs = [pboard readObjectsForClasses:@[[NSURL class]] options:nil];
+    [self doImportPreset:URLs atIndexPath:indexPath];
+}
+
 - (BOOL)outlineView:(NSOutlineView *)ov acceptDrop:(id <NSDraggingInfo>)info item:(id)targetItem childIndex:(NSInteger)index
 {
-	// note that "targetItem" is a NSTreeNode proxy
-	//
 	BOOL result = NO;
 
+    // note that "targetItem" is a NSTreeNode proxy
 	// find the index path to insert our dropped object(s)
 	NSIndexPath *indexPath;
 	if (targetItem)
 	{
-		// drop down inside the tree node:
-		// feth the index path to insert our dropped node
-		indexPath = [[targetItem indexPath] indexPathByAddingIndex:index];
+		// drop down inside the tree node: fetch the index path to insert our dropped node
+        indexPath = index == -1 ? [[targetItem indexPath] indexPathByAddingIndex:0] : [[targetItem indexPath] indexPathByAddingIndex:index];
 	}
 	else
 	{
 		// drop at the top root level
-		if (index == -1)	// drop area might be ambibuous (not at a particular location)
+		if (index == -1)	// drop area might be ambiguous (not at a particular location)
+        {
 			indexPath = [NSIndexPath indexPathWithIndex:self.presets.root.children.count]; // drop at the end of the top level
+        }
 		else
+        {
 			indexPath = [NSIndexPath indexPathWithIndex:index]; // drop at a particular place at the top level
+        }
 	}
 
-	NSPasteboard *pboard = [info draggingPasteboard];	// get the pasteboard
+    NSPasteboard *pboard = info.draggingPasteboard;
 
-	// check the dragging type -
-	if ([pboard availableTypeFromArray:@[kHandBrakePresetPBoardType]])
+	// check the dragging type
+	if ([pboard availableTypeFromArray:@[kHandBrakeInternalPBoardType]])
 	{
 		// user is doing an intra-app drag within the outline view
 		[self handleInternalDrops:pboard withIndexPath:indexPath];
 		result = YES;
 	}
+    else if ([pboard availableTypeFromArray:@[(NSString *)kUTTypeFileURL]])
+    {
+        [self handleExternalDrops:pboard withIndexPath:indexPath];
+        result = YES;
+    }
 
 	return result;
 }

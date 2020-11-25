@@ -8,13 +8,14 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class HBTitleSubtitlesTrack;
 @class HBSubtitlesTrack;
 
 /**
  *  HBTrackDataSource
  */
 @protocol HBTrackDataSource <NSObject>
-- (NSDictionary<NSString *, id> *)sourceTrackAtIndex:(NSUInteger)idx;
+- (HBTitleSubtitlesTrack *)sourceTrackAtIndex:(NSUInteger)idx;
 - (NSArray<NSString *> *)sourceTracksArray;
 @end
 
@@ -50,6 +51,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Whether is the default track.
 @property (nonatomic, readwrite) BOOL def;
 
+@property (nonatomic, readwrite, nullable) NSString *title;
+
+
 /// The URL of the external subtitles file.
 @property (nonatomic, readwrite, copy, nullable) NSURL *fileURL;
 /// The ISO 639/2 language code of the external subtitles file.
@@ -69,7 +73,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// A complete list of the possible encodings.
 - (NSArray<NSString *> *)encodings;
 
-@property (nonatomic, readonly) BOOL isSrt;
+@property (nonatomic, readonly) BOOL isExternal;
 @property (nonatomic, readonly) BOOL isEnabled;
 @property (nonatomic, readonly) BOOL isForcedSupported;
 @property (nonatomic, readonly) BOOL canPassthru;
@@ -77,10 +81,10 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 /**
- * HBIsoLanguageTrasformer is a trasformer to transform
+ * HBIsoLanguageTransformer is a transformer to transform
  * a ISO 639/2 code to a human readable language name.
  */
-@interface HBIsoLanguageTrasformer : NSValueTransformer
+@interface HBIsoLanguageTransformer : NSValueTransformer
 @end
 
 NS_ASSUME_NONNULL_END

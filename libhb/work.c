@@ -1,21 +1,20 @@
 /* work.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
    For full terms see the file COPYING file or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
-#include "hb.h"
+#include "handbrake/handbrake.h"
 #include "libavformat/avformat.h"
-#include "openclwrapper.h"
-#include "opencl.h"
-#include "decomb.h"
+#include "handbrake/decomb.h"
+#include "handbrake/hbavfilter.h"
 
-#ifdef USE_QSV
-#include "qsv_common.h"
-#include "qsv_filter_pp.h"
+#if HB_PROJECT_FEATURE_QSV
+#include "handbrake/qsv_common.h"
+#include "handbrake/qsv_filter_pp.h"
 #endif
 
 typedef struct
@@ -58,25 +57,40 @@ hb_thread_t * hb_work_init( hb_list_t * jobs, volatile int * die, hb_error_code 
     return hb_thread_init( "work", work_func, work, HB_LOW_PRIORITY );
 }
 
-static void InitWorkState(hb_handle_t *h, int pass_id, int pass, int pass_count)
+static void InitWorkState(hb_job_t * job, int pass, int pass_count)
 {
     hb_state_t state;
 
-    state.state  = HB_STATE_WORKING;
+    memset(&state, 0, sizeof(state));
+    state.state       = HB_STATE_WORKING;
+    state.sequence_id = job->sequence_id;
 #define p state.param.working
-    p.pass_id    = pass_id;
-    p.pass       = pass;
-    p.pass_count = pass_count;
-    p.progress   = 0.0;
-    p.rate_cur   = 0.0;
-    p.rate_avg   = 0.0;
-    p.hours      = -1;
-    p.minutes    = -1;
-    p.seconds    = -1;
+    p.pass_id         = job->pass_id;
+    p.pass            = pass;
+    p.pass_count      = pass_count;
+    p.progress        = 0.0;
+    p.rate_cur        = 0.0;
+    p.rate_avg        = 0.0;
+    p.eta_seconds     = 0;
+    p.hours           = -1;
+    p.minutes         = -1;
+    p.seconds         = -1;
 #undef p
 
-    hb_set_state( h, &state );
+    hb_set_state( job->h, &state );
+}
 
+static void SetWorkStateInfo(hb_job_t *job)
+{
+    hb_state_t state;
+
+    if (job == NULL)
+    {
+        return;
+    }
+    hb_get_state2(job->h, &state);
+    state.param.working.error        = *job->done_error;
+    hb_set_state( job->h, &state );
 }
 
 /**
@@ -88,6 +102,8 @@ static void work_func( void * _work )
     hb_work_t  * work = _work;
     hb_job_t   * job;
 
+    time_t t = time(NULL);
+    hb_log("Starting work at: %s", asctime(localtime(&t)));
     hb_log( "%d job(s) to process", hb_list_count( work->jobs ) );
 
     while( !*work->die && ( job = hb_list_item( work->jobs, 0 ) ) )
@@ -105,6 +121,8 @@ static void work_func( void * _work )
         {
             hb_deep_log(1, "json job:\n%s", job->json);
 
+            // Initialize state sequence_id
+            InitWorkState(job, 0, 0);
             // Perform title scan for json job
             hb_json_job_scan(job->h, job->json);
 
@@ -134,12 +152,14 @@ static void work_func( void * _work )
             job->die = work->die;
             job->done_error = work->error;
             *(work->current_job) = job;
-            InitWorkState(job->h, job->pass_id, pass + 1, pass_count);
+            InitWorkState(job, pass + 1, pass_count);
             do_job( job );
-            *(work->current_job) = NULL;
         }
-        // Clean up any incomplete jobs
-        for (; pass < pass_count; pass++)
+        SetWorkStateInfo(job);
+        *(work->current_job) = NULL;
+
+        // Clean job passes
+        for (pass = 0; pass < pass_count; pass++)
         {
             job = hb_list_item(passes, pass);
             hb_job_close(&job);
@@ -151,6 +171,8 @@ static void work_func( void * _work )
         hb_force_rescan(h);
     }
 
+    t = time(NULL);
+    hb_log("Finished work at: %s", asctime(localtime(&t)));
     free( work );
 }
 
@@ -231,12 +253,13 @@ hb_work_object_t* hb_video_encoder(hb_handle_t *h, int vcodec)
             break;
         case HB_VCODEC_QSV_H264:
         case HB_VCODEC_QSV_H265:
+        case HB_VCODEC_QSV_H265_10BIT:
             w = hb_get_work(h, WORK_ENCQSV);
             break;
         case HB_VCODEC_THEORA:
             w = hb_get_work(h, WORK_ENCTHEORA);
             break;
-#ifdef USE_X265
+#if HB_PROJECT_FEATURE_X265
         case HB_VCODEC_X265_8BIT:
         case HB_VCODEC_X265_10BIT:
         case HB_VCODEC_X265_12BIT:
@@ -244,6 +267,37 @@ hb_work_object_t* hb_video_encoder(hb_handle_t *h, int vcodec)
             w = hb_get_work(h, WORK_ENCX265);
             break;
 #endif
+#if HB_PROJECT_FEATURE_VCE
+        case HB_VCODEC_FFMPEG_VCE_H264:
+            w = hb_get_work(h, WORK_ENCAVCODEC);
+            w->codec_param = AV_CODEC_ID_H264;
+            break;
+        case HB_VCODEC_FFMPEG_VCE_H265:
+            w = hb_get_work(h, WORK_ENCAVCODEC);
+            w->codec_param = AV_CODEC_ID_HEVC;
+            break;
+#endif
+#if HB_PROJECT_FEATURE_NVENC
+        case HB_VCODEC_FFMPEG_NVENC_H264:
+            w = hb_get_work(h, WORK_ENCAVCODEC);
+            w->codec_param = AV_CODEC_ID_H264;
+            break;
+        case HB_VCODEC_FFMPEG_NVENC_H265:
+            w = hb_get_work(h, WORK_ENCAVCODEC);
+            w->codec_param = AV_CODEC_ID_HEVC;
+            break;
+#endif
+#ifdef __APPLE__
+        case HB_VCODEC_FFMPEG_VT_H264:
+            w = hb_get_work(h, WORK_ENCAVCODEC);
+            w->codec_param = AV_CODEC_ID_H264;
+            break;
+        case HB_VCODEC_FFMPEG_VT_H265:
+            w = hb_get_work(h, WORK_ENCAVCODEC);
+            w->codec_param = AV_CODEC_ID_HEVC;
+            break;
+#endif
+
         default:
             hb_error("Unknown video codec (0x%x)", vcodec );
     }
@@ -355,6 +409,14 @@ void hb_display_job_info(hb_job_t *job)
             break;
     }
 
+    if (job->align_av_start)
+    {
+        hb_log("     + align initial A/V stream timestamps");
+    }
+    if (job->inline_parameter_sets)
+    {
+        hb_log("     + optimized for adaptive streaming (inline parameter sets)");
+    }
     if( job->chapter_markers )
     {
         hb_log( "     + chapter markers" );
@@ -362,7 +424,7 @@ void hb_display_job_info(hb_job_t *job)
 
     hb_log(" * video track");
 
-#ifdef USE_QSV
+#if HB_PROJECT_FEATURE_QSV
     if (hb_qsv_decode_is_enabled(job))
     {
         hb_log("   + decoder: %s",
@@ -371,7 +433,7 @@ void hb_display_job_info(hb_job_t *job)
     else
 #endif
     {
-        hb_log("   + decoder: %s", title->video_codec_name);
+        hb_log("   + decoder: %s %d-bit", title->video_codec_name, hb_get_bit_depth(job->pix_fmt));
     }
 
     if( title->video_bitrate )
@@ -386,6 +448,10 @@ void hb_display_job_info(hb_job_t *job)
         for( i = 0; i < hb_list_count( job->list_filter ); i++ )
         {
             hb_filter_object_t * filter = hb_list_item( job->list_filter, i );
+            if (filter->aliased && global_verbosity_level < 2)
+            {
+                continue;
+            }
             char * settings = hb_filter_settings_string(filter->id,
                                                         filter->settings);
             if (settings != NULL)
@@ -466,6 +532,13 @@ void hb_display_job_info(hb_job_t *job)
                 case HB_VCODEC_X265_16BIT:
                 case HB_VCODEC_QSV_H264:
                 case HB_VCODEC_QSV_H265:
+                case HB_VCODEC_QSV_H265_10BIT:
+                case HB_VCODEC_FFMPEG_VCE_H264:
+                case HB_VCODEC_FFMPEG_VCE_H265:
+                case HB_VCODEC_FFMPEG_NVENC_H264:
+                case HB_VCODEC_FFMPEG_NVENC_H265:
+                case HB_VCODEC_FFMPEG_VT_H264:
+                case HB_VCODEC_FFMPEG_VT_H265:
                     hb_log("     + profile: %s", job->encoder_profile);
                 default:
                     break;
@@ -477,8 +550,19 @@ void hb_display_job_info(hb_job_t *job)
             {
                 case HB_VCODEC_X264_8BIT:
                 case HB_VCODEC_X264_10BIT:
+                case HB_VCODEC_X265_8BIT:
+                case HB_VCODEC_X265_10BIT:
+                case HB_VCODEC_X265_12BIT:
                 case HB_VCODEC_QSV_H264:
                 case HB_VCODEC_QSV_H265:
+                case HB_VCODEC_QSV_H265_10BIT:
+                case HB_VCODEC_FFMPEG_VCE_H264:
+                case HB_VCODEC_FFMPEG_VCE_H265:
+                case HB_VCODEC_FFMPEG_NVENC_H264:
+                case HB_VCODEC_FFMPEG_NVENC_H265:
+                case HB_VCODEC_FFMPEG_VT_H264:
+                // VT h.265 currently only supports auto level
+                // case HB_VCODEC_FFMPEG_VT_H265:
                     hb_log("     + level:   %s", job->encoder_level);
                 default:
                     break;
@@ -507,18 +591,8 @@ void hb_display_job_info(hb_job_t *job)
             }
         }
 
-        if (job->color_matrix_code &&
-            ((job->vcodec & HB_VCODEC_X264_MASK) ||
-             (job->vcodec & HB_VCODEC_X265_MASK)))
-        {
-            // color matrix is set:
-            // 1) at the stream    level (x264, x265, qsv  only),
-            hb_log("     + custom color matrix: %s",
-                   job->color_matrix_code == 1 ? "ITU Bt.601 (NTSC)" :
-                   job->color_matrix_code == 2 ? "ITU Bt.601 (PAL)"  :
-                   job->color_matrix_code == 3 ? "ITU Bt.709 (HD)"   :
-                   job->color_matrix_code == 4 ? "ITU Bt.2020 (UHD)"   : "Custom");
-        }
+        hb_log("     + color profile: %d-%d-%d",
+               job->color_prim, job->color_transfer, job->color_matrix);
     }
 
     if (job->indepth_scan)
@@ -537,29 +611,49 @@ void hb_display_job_info(hb_job_t *job)
         {
             if( job->indepth_scan )
             {
-                hb_log( "   + subtitle, %s (track %d, id 0x%x) %s [%s]",
+                hb_log( "   + subtitle, %s (track %d, id 0x%x, %s)",
                         subtitle->lang, subtitle->track, subtitle->id,
-                        subtitle->format == PICTURESUB ? "Picture" : "Text",
-                        hb_subsource_name( subtitle->source ) );
+                        subtitle->format == PICTURESUB ? "Picture" : "Text");
             }
-            else if( subtitle->source == SRTSUB )
+            else if (subtitle->source == IMPORTSRT)
             {
                 /* For SRT, print offset and charset too */
-                hb_log( " * subtitle track %d, %s (track %d, id 0x%x) Text [SRT] -> %s%s, offset: %"PRId64", charset: %s",
-                        subtitle->out_track, subtitle->lang, subtitle->track, subtitle->id,
-                        subtitle->config.dest == RENDERSUB ? "Render/Burn-in" : "Passthrough",
-                        subtitle->config.default_track ? ", Default" : "",
-                        subtitle->config.offset, subtitle->config.src_codeset );
+                hb_log(" * subtitle track %d, %s (track %d, id 0x%x, Text) -> "
+                       "%s%s, offset: %"PRId64", charset: %s",
+                       subtitle->out_track, subtitle->lang, subtitle->track,
+                       subtitle->id,
+                       subtitle->config.dest == RENDERSUB ? "Render/Burn-in"
+                                                          : "Passthrough",
+                       subtitle->config.default_track ? ", Default" : "",
+                       subtitle->config.offset, subtitle->config.src_codeset);
+            }
+            else if (subtitle->source == IMPORTSSA)
+            {
+                /* For SSA, print offset */
+                hb_log(" * subtitle track %d, %s (track %d, id 0x%x, Text) -> "
+                       "%s%s, offset: %"PRId64,
+                       subtitle->out_track, subtitle->lang, subtitle->track,
+                       subtitle->id,
+                       subtitle->config.dest == RENDERSUB ? "Render/Burn-in"
+                                                          : "Passthrough",
+                       subtitle->config.default_track ? ", Default" : "",
+                       subtitle->config.offset);
             }
             else
             {
-                hb_log( " * subtitle track %d, %s (track %d, id 0x%x) %s [%s] -> %s%s%s",
-                        subtitle->out_track, subtitle->lang, subtitle->track, subtitle->id,
-                        subtitle->format == PICTURESUB ? "Picture" : "Text",
-                        hb_subsource_name( subtitle->source ),
-                        subtitle->config.dest == RENDERSUB ? "Render/Burn-in" : "Passthrough",
-                        subtitle->config.force ? ", Forced Only" : "",
-                        subtitle->config.default_track ? ", Default" : "" );
+                hb_log(" * subtitle track %d, %s (track %d, id 0x%x, %s) -> "
+                       "%s%s%s",
+                       subtitle->out_track, subtitle->lang, subtitle->track,
+                       subtitle->id,
+                       subtitle->format == PICTURESUB ? "Picture" : "Text",
+                       subtitle->config.dest == RENDERSUB ? "Render/Burn-in"
+                                                          : "Passthrough",
+                       subtitle->config.force ? ", Forced Only" : "",
+                       subtitle->config.default_track ? ", Default" : "" );
+            }
+            if (subtitle->config.name )
+            {
+                hb_log("   + name: %s", subtitle->config.name);
             }
         }
     }
@@ -609,7 +703,8 @@ void hb_display_job_info(hb_job_t *job)
                 {
                     hb_log( "   + dynamic range compression: %f", audio->config.out.dynamic_range_compression );
                 }
-                if (hb_audio_dither_is_supported(audio->config.out.codec))
+                if (hb_audio_dither_is_supported(audio->config.out.codec,
+                                            audio->config.in.sample_bit_depth))
                 {
                     hb_log("   + dither: %s",
                            hb_audio_dither_get_description(audio->config.out.dither_method));
@@ -676,6 +771,49 @@ void correct_framerate( hb_interjob_t * interjob, hb_job_t * job )
                job->orig_vrate.num, job->orig_vrate.den,
                job->vrate.num, job->vrate.den);
     }
+}
+
+static int bit_depth_is_supported(hb_job_t * job, int bit_depth)
+{
+    for (int i = 0; i < hb_list_count(job->list_filter); i++)
+    {
+        hb_filter_object_t *filter = hb_list_item(job->list_filter, i);
+
+        switch (filter->id) {
+            case HB_FILTER_DETELECINE:
+            case HB_FILTER_COMB_DETECT:
+            case HB_FILTER_DECOMB:
+            case HB_FILTER_DENOISE:
+            case HB_FILTER_NLMEANS:
+            case HB_FILTER_CHROMA_SMOOTH:
+            case HB_FILTER_LAPSHARP:
+            case HB_FILTER_UNSHARP:
+            case HB_FILTER_GRAYSCALE:
+                return 0;
+        }
+    }
+
+    if (hb_video_encoder_get_depth(job->vcodec) < bit_depth)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+
+static int get_best_pix_ftm(hb_job_t * job)
+{
+    int bit_depth = hb_get_bit_depth(job->title->pix_fmt);
+
+    if (bit_depth >= 12 && bit_depth_is_supported(job, 12))
+    {
+        return AV_PIX_FMT_YUV420P12;
+    }
+    if (bit_depth >= 10 && bit_depth_is_supported(job, 10))
+    {
+        return AV_PIX_FMT_YUV420P10;
+    }
+    return AV_PIX_FMT_YUV420P;
 }
 
 static void analyze_subtitle_scan( hb_job_t * job )
@@ -793,7 +931,7 @@ static int sanitize_subtitles( hb_job_t * job )
             subtitle = hb_list_item(job->list_subtitle, i);
             /* Remove the scanned subtitle from the list if
              * it would result in:
-             * - an emty track (forced and no forced hits)
+             * - an empty track (forced and no forced hits)
              * - an identical, duplicate subtitle track:
              *   -> both (or neither) are forced
              *   -> subtitle is not forced but all its hits are forced */
@@ -1109,7 +1247,8 @@ static int sanitize_audio(hb_job_t *job)
         }
 
         /* sense-check the requested dither */
-        if (hb_audio_dither_is_supported(audio->config.out.codec))
+        if (hb_audio_dither_is_supported(audio->config.out.codec,
+                                         audio->config.in.sample_bit_depth))
         {
             if (audio->config.out.dither_method ==
                 hb_audio_dither_get_default())
@@ -1130,184 +1269,7 @@ static int sanitize_audio(hb_job_t *job)
     return 0;
 }
 
-static int sanitize_qsv( hb_job_t * job )
-{
-#ifdef USE_QSV
-#if 0 // TODO: re-implement QSV VPP filtering and QSV zerocopy path
-    int i;
-
-    /*
-     * XXX: mfxCoreInterface's CopyFrame doesn't work in old drivers, and our
-     *      workaround is really slow. If we have validated CPU-based filters in
-     *      the list and we can't use CopyFrame, disable QSV decoding until a
-     *      better solution is implemented.
-     */
-    if (hb_qsv_copyframe_is_slow(job->vcodec))
-    {
-        if (job->list_filter != NULL)
-        {
-            int encode_only = 0;
-            for (i = 0; i < hb_list_count(job->list_filter) && !encode_only; i++)
-            {
-                hb_filter_object_t *filter = hb_list_item(job->list_filter, i);
-                switch (filter->id)
-                {
-                    // validated, CPU-based filters
-                    case HB_FILTER_ROTATE:
-                    case HB_FILTER_RENDER_SUB:
-                    case HB_FILTER_AVFILTER:
-                        encode_only = 1;
-                        break;
-
-                    // CPU-based deinterlace (validated)
-                    case HB_FILTER_DEINTERLACE:
-                    {
-                        int mode = hb_dict_get_int(filter->settings, "mode");
-                        if (!(mode & MODE_DEINTERLACE_QSV))
-                        {
-                            encode_only = 1;
-                        }
-                    } break;
-
-                    // other filters will be removed
-                    default:
-                        break;
-                }
-            }
-            if (encode_only)
-            {
-                hb_log("do_job: QSV: possible CopyFrame bug, using encode-only path");
-                if (hb_get_cpu_platform() >= HB_CPU_PLATFORM_INTEL_IVB)
-                {
-                    hb_log("do_job: QSV: please update your Intel graphics driver to version 9.18.10.3257 or later");
-                }
-                job->qsv.decode = 0;
-            }
-        }
-    }
-
-    /*
-     * When QSV's VPP is used for filtering, not all CPU filters
-     * are supported, so we need to do a little extra setup here.
-     */
-    if (job->vcodec & HB_VCODEC_QSV_MASK)
-    {
-        int vpp_settings[7];
-        int num_cpu_filters = 0;
-        hb_filter_object_t *filter;
-        // default values for VPP filter
-        vpp_settings[0] = job->title->geometry.width;
-        vpp_settings[1] = job->title->geometry.height;
-        vpp_settings[2] = job->title->crop[0];
-        vpp_settings[3] = job->title->crop[1];
-        vpp_settings[4] = job->title->crop[2];
-        vpp_settings[5] = job->title->crop[3];
-        vpp_settings[6] = 0; // deinterlace: off
-        if (job->list_filter != NULL && hb_list_count(job->list_filter) > 0)
-        {
-            while (hb_list_count(job->list_filter) > num_cpu_filters)
-            {
-                filter = hb_list_item(job->list_filter, num_cpu_filters);
-                switch (filter->id)
-                {
-                    // cropping and scaling always done via VPP filter
-                    case HB_FILTER_CROP_SCALE:
-                        hb_dict_extract_int(&vpp_settings[0], filter->settings,
-                                            "width");
-                        hb_dict_extract_int(&vpp_settings[1], filter->settings,
-                                            "height");
-                        hb_dict_extract_int(&vpp_settings[2], filter->settings,
-                                            "crop-top");
-                        hb_dict_extract_int(&vpp_settings[3], filter->settings,
-                                            "crop-bottom");
-                        hb_dict_extract_int(&vpp_settings[4], filter->settings,
-                                            "crop-left");
-                        hb_dict_extract_int(&vpp_settings[5], filter->settings,
-                                            "crop-right");
-
-                        // VPP crop/scale takes precedence over OpenCL scale too
-                        if (job->use_opencl)
-                        {
-                            hb_release_opencl_run_env();
-                            job->use_opencl = 0;
-                        }
-                        hb_list_rem(job->list_filter, filter);
-                        hb_filter_close(&filter);
-                        break;
-
-                    // pick VPP or CPU deinterlace depending on settings
-                    case HB_FILTER_DEINTERLACE:
-                    {
-                        int mode = hb_dict_get_int(filter->settings, "mode");
-                        if (mode & MODE_DEINTERLACE_QSV)
-                        {
-                            // deinterlacing via VPP filter
-                            vpp_settings[6] = 1;
-                            hb_list_rem(job->list_filter, filter);
-                            hb_filter_close(&filter);
-                        }
-                        else
-                        {
-                            // validated
-                            num_cpu_filters++;
-                        }
-                    } break;
-
-                    // then, validated filters
-                    case HB_FILTER_ROTATE: // TODO: use Media SDK for this
-                    case HB_FILTER_RENDER_SUB:
-                    case HB_FILTER_AVFILTER:
-                        num_cpu_filters++;
-                        break;
-
-                    // finally, drop all unsupported filters
-                    default:
-                        hb_log("do_job: QSV: full path, removing unsupported filter '%s'",
-                               filter->name);
-                        hb_list_rem(job->list_filter, filter);
-                        hb_filter_close(&filter);
-                        break;
-                }
-            }
-            if (num_cpu_filters > 0)
-            {
-                // we need filters to copy to system memory and back
-                filter = hb_filter_init(HB_FILTER_QSV_PRE);
-                hb_add_filter_dict(job, filter, NULL);
-                filter = hb_filter_init(HB_FILTER_QSV_POST);
-                hb_add_filter_dict(job, filter, NULL);
-            }
-            if (vpp_settings[0] != job->title->geometry.width  ||
-                vpp_settings[1] != job->title->geometry.height ||
-                vpp_settings[2] >= 1 /* crop */       ||
-                vpp_settings[3] >= 1 /* crop */       ||
-                vpp_settings[4] >= 1 /* crop */       ||
-                vpp_settings[5] >= 1 /* crop */       ||
-                vpp_settings[6] >= 1 /* deinterlace */)
-            {
-                // we need the VPP filter
-                hb_dict_t * dict = hb_dict_init();
-                hb_dict_set(dict, "width", hb_value_int(vpp_settings[0]));
-                hb_dict_set(dict, "height", hb_value_int(vpp_settings[1]));
-                hb_dict_set(dict, "crop-top", hb_value_int(vpp_settings[2]));
-                hb_dict_set(dict, "crop-bottom", hb_value_int(vpp_settings[3]));
-                hb_dict_set(dict, "crop-left", hb_value_int(vpp_settings[4]));
-                hb_dict_set(dict, "crop-right", hb_value_int(vpp_settings[5]));
-                hb_dict_set(dict, "deinterlace", hb_value_int(vpp_settings[6]));
-
-                filter = hb_filter_init(HB_FILTER_QSV);
-                hb_add_filter_dict(job, filter, dict);
-                hb_value_free(&dict);
-            }
-        }
-    }
-#endif // QSV VPP filtering and QSV zerocopy path
-#endif // USE_QSV
-
-    return 0;
-}
-
-static void sanitize_filter_list(hb_list_t *list)
+static void sanitize_filter_list(hb_list_t *list, hb_geometry_t src_geo)
 {
     // Add selective deinterlacing mode if comb detection is enabled
     if (hb_filter_find(list, HB_FILTER_COMB_DETECT) != NULL)
@@ -1328,12 +1290,53 @@ static void sanitize_filter_list(hb_list_t *list)
         }
     }
 
-    // Combine HB_FILTER_AVFILTERs that are sequential
-    hb_avfilter_combine(list);
+    int is_detel = 0;
+    hb_filter_object_t * filter = hb_filter_find(list, HB_FILTER_DETELECINE);
+    if (filter != NULL)
+    {
+        is_detel = 1;
+    }
+
+    filter = hb_filter_find(list, HB_FILTER_VFR);
+    if (filter != NULL)
+    {
+        int mode = hb_dict_get_int(filter->settings, "mode");
+        // "Same as source" FPS and no HB_FILTER_DETELECINE
+        if ( (mode == 0) && (is_detel == 0) )
+        {
+            hb_list_rem(list, filter);
+            hb_filter_close(&filter);
+            hb_log("Skipping vfr filter");
+        }
+    }
+
+    filter = hb_filter_find(list, HB_FILTER_CROP_SCALE);
+    if (filter != NULL)
+    {
+        hb_dict_t* settings = filter->settings;
+        if (settings != NULL)
+        {
+            int width, height, top, bottom, left, right;
+            width = hb_dict_get_int(settings, "width");
+            height = hb_dict_get_int(settings, "height");
+            top = hb_dict_get_int(settings, "crop-top");
+            bottom = hb_dict_get_int(settings, "crop-bottom");
+            left = hb_dict_get_int(settings, "crop-left");
+            right = hb_dict_get_int(settings, "crop-right");
+
+            if ( (src_geo.width == width) && (src_geo.height == height) &&
+                (top == 0) && (bottom == 0 ) && (left == 0) && (right == 0) )
+            {
+                hb_list_rem(list, filter);
+                hb_filter_close(&filter);
+                hb_log("Skipping crop/scale filter");
+            }
+        }
+    }
 }
 
 /**
- * Job initialization rountine.
+ * Job initialization routine.
  *
  * Initializes fifos.
  * Creates work objects for synchronizer, video decoder, video renderer,
@@ -1355,7 +1358,6 @@ static void do_job(hb_job_t *job)
     title = job->title;
 
     interjob = hb_interjob_get(job->h);
-    job->orig_vrate = job->vrate;
     if (job->sequence_id != interjob->sequence_id)
     {
         // New job sequence, clear interjob
@@ -1368,29 +1370,18 @@ static void do_job(hb_job_t *job)
     w = hb_get_work(job->h, WORK_READER);
     hb_list_add(job->list_work, w);
 
-    /*
-     * OpenCL
-     *
-     * Note: we delay hb_ocl_init until here, since they're no point it loading
-     * the library if we aren't going to use it. But we only call hb_ocl_close
-     * in hb_global_close, since un/reloading the library each run is wasteful.
-     */
-    if (job->use_opencl)
+    if (job->indepth_scan)
     {
-        if (hb_ocl_init() || hb_init_opencl_run_env(0, NULL, "-I."))
-        {
-            hb_log("work: failed to initialize OpenCL environment, using fallback");
-            hb_release_opencl_run_env();
-            job->use_opencl = 0;
-        }
+        hb_log( "Starting Task: Subtitle Scan" );
+    }
+    else if (job->pass_id == HB_PASS_ENCODE_1ST)
+    {
+        hb_log( "Starting Task: Analysis Pass" );
     }
     else
     {
-        // we're not (re-)using OpenCL here, we can release the environment
-        hb_release_opencl_run_env();
+        hb_log( "Starting Task: Encoding Pass" );
     }
-
-    hb_log( "starting job" );
 
     // This must be performed before initializing filters because
     // it can add the subtitle render filter.
@@ -1402,15 +1393,12 @@ static void do_job(hb_job_t *job)
         goto cleanup;
     }
 
-    // sanitize_qsv looks for subtitle render filter, so must happen after
-    // sanitize_subtitle
-    result = sanitize_qsv(job);
-    if (result)
+#if HB_PROJECT_FEATURE_QSV
+    if (hb_qsv_is_enabled(job))
     {
-        *job->done_error = HB_ERROR_WRONG_INPUT;
-        *job->die = 1;
-        goto cleanup;
+        job->qsv.ctx = hb_qsv_context_init();
     }
+#endif
 
     // Filters have an effect on settings.
     // So initialize the filters and update the job.
@@ -1418,24 +1406,46 @@ static void do_job(hb_job_t *job)
     {
         hb_filter_init_t init;
 
-        sanitize_filter_list(job->list_filter);
+        sanitize_filter_list(job->list_filter, title->geometry);
 
+#if HB_PROJECT_FEATURE_QSV && (defined( _WIN32 ) || defined( __MINGW32__ ))
+        // sanitize_qsv looks for subtitle render filter, so must happen after
+        // sanitize_subtitle
+        if (hb_qsv_is_enabled(job))
+        {
+            result = hb_qsv_sanitize_filter_list(job);
+            if (result)
+            {
+                *job->done_error = HB_ERROR_WRONG_INPUT;
+                *job->die = 1;
+                goto cleanup;
+            }
+        }
+#endif
         memset(&init, 0, sizeof(init));
+        init.time_base.num = 1;
+        init.time_base.den = 90000;
         init.job = job;
-        init.pix_fmt = AV_PIX_FMT_YUV420P;
+        init.pix_fmt = get_best_pix_ftm(job);
+        init.color_range = AVCOL_RANGE_MPEG;
+
+        init.color_prim = title->color_prim;
+        init.color_transfer = title->color_transfer;
+        init.color_matrix = title->color_matrix;
         init.geometry.width = title->geometry.width;
         init.geometry.height = title->geometry.height;
 
         init.geometry.par = job->par;
-        memcpy(init.crop, title->crop, sizeof(int[4]));
+        memset(init.crop, 0, sizeof(int[4]));
         init.vrate = job->vrate;
         init.cfr = 0;
         init.grayscale = 0;
+
         for( i = 0; i < hb_list_count( job->list_filter ); )
         {
             hb_filter_object_t * filter = hb_list_item( job->list_filter, i );
             filter->done = &job->done;
-            if (filter->init(filter, &init))
+            if (filter->init != NULL && filter->init(filter, &init))
             {
                 hb_log( "Failure to initialise filter '%s', disabling",
                         filter->name );
@@ -1445,6 +1455,7 @@ static void do_job(hb_job_t *job)
             }
             i++;
         }
+        job->pix_fmt = init.pix_fmt;
         job->width = init.geometry.width;
         job->height = init.geometry.height;
         job->par = init.geometry.par;
@@ -1453,12 +1464,16 @@ static void do_job(hb_job_t *job)
         job->cfr = init.cfr;
         job->grayscale = init.grayscale;
 
+        // Combine HB_FILTER_AVFILTERs that are sequential
+        hb_avfilter_combine(job->list_filter);
+
         // Perform filter post_init which informs filters of final
         // job configuration. e.g. rendersub filter needs to know the
         // final crop dimensions.
         for( i = 0; i < hb_list_count( job->list_filter ); )
         {
             hb_filter_object_t * filter = hb_list_item( job->list_filter, i );
+            filter->done = &job->done;
             if (filter->post_init != NULL && filter->post_init(filter, job))
             {
                 hb_log( "Failure to initialise filter '%s', disabling",
@@ -1480,6 +1495,7 @@ static void do_job(hb_job_t *job)
         job->cfr = 0;
     }
 
+    job->orig_vrate = job->vrate;
     if (job->pass_id == HB_PASS_ENCODE_2ND)
     {
         correct_framerate(interjob, job);
@@ -1489,10 +1505,12 @@ static void do_job(hb_job_t *job)
      * The frame rate may affect the bitstream's time base, lose superfluous
      * factors for consistency (some encoders reduce fractions, some don't).
      */
+    hb_reduce(&job->orig_vrate.num, &job->orig_vrate.den,
+               job->orig_vrate.num,  job->orig_vrate.den);
     hb_reduce(&job->vrate.num, &job->vrate.den,
                job->vrate.num,  job->vrate.den);
 
-#ifdef USE_QSV
+#if HB_PROJECT_FEATURE_QSV
 #if 0 // TODO: re-implement QSV zerocopy path
     if (hb_qsv_decode_is_enabled(job) && (job->vcodec & HB_VCODEC_QSV_MASK))
     {
@@ -1582,10 +1600,10 @@ static void do_job(hb_job_t *job)
         // Since that number is unbounded, the FIFO must be made
         // (effectively) unbounded in capacity.
         subtitle->fifo_raw  = hb_fifo_init( FIFO_UNBOUNDED, FIFO_UNBOUNDED_WAKE );
-        if (w->id != WORK_DECSRTSUB)
+        // Check if input comes from a file.
+        if (subtitle->source != IMPORTSRT &&
+            subtitle->source != IMPORTSSA)
         {
-            // decsrtsub is a buffer source like reader.  It's input comes
-            // from a file.
             subtitle->fifo_in  = hb_fifo_init( FIFO_SMALL, FIFO_SMALL_WAKE );
         }
         if (!job->indepth_scan)
@@ -1655,9 +1673,12 @@ static void do_job(hb_job_t *job)
             for (i = 0; i < hb_list_count(job->list_filter); i++)
             {
                 hb_filter_object_t * filter = hb_list_item(job->list_filter, i);
-                filter->fifo_in = fifo_in;
-                filter->fifo_out = hb_fifo_init( FIFO_MINI, FIFO_MINI_WAKE );
-                fifo_in = filter->fifo_out;
+                if (!filter->skip)
+                {
+                    filter->fifo_in = fifo_in;
+                    filter->fifo_out = hb_fifo_init(FIFO_MINI, FIFO_MINI_WAKE);
+                    fifo_in = filter->fifo_out;
+                }
             }
             job->fifo_render = fifo_in;
         }
@@ -1735,10 +1756,13 @@ static void do_job(hb_job_t *job)
         {
             hb_filter_object_t * filter = hb_list_item(job->list_filter, i);
 
-            // Filters were initialized earlier, so we just need
-            // to start the filter's thread
-            filter->thread = hb_thread_init( filter->name, filter_loop, filter,
-                                             HB_LOW_PRIORITY );
+            if (!filter->skip)
+            {
+                // Filters were initialized earlier, so we just need
+                // to start the filter's thread
+                filter->thread = hb_thread_init(filter->name, filter_loop,
+                                                filter, HB_LOW_PRIORITY);
+            }
         }
     }
 
@@ -1828,7 +1852,10 @@ cleanup:
         for (i = 0; i < hb_list_count( job->list_filter ); i++)
         {
             hb_filter_object_t * filter = hb_list_item( job->list_filter, i );
-            hb_fifo_close( &filter->fifo_out );
+            if (!filter->skip)
+            {
+                hb_fifo_close( &filter->fifo_out );
+            }
         }
     }
 
@@ -1836,9 +1863,11 @@ cleanup:
     {
         analyze_subtitle_scan(job);
     }
-
     hb_buffer_pool_free();
-    hb_job_close(&job);
+#if HB_PROJECT_FEATURE_QSV
+    if (hb_qsv_is_enabled(job))
+        hb_qsv_context_uninit(job);
+#endif
 }
 
 static inline void copy_chapter( hb_buffer_t * dst, hb_buffer_t * src )
@@ -1859,7 +1888,7 @@ static inline void copy_chapter( hb_buffer_t * dst, hb_buffer_t * src )
  * Performs the work object's specific work function.
  * Loops calling work function for associated work object. Sleeps when fifo is full.
  * Monitors work done indicator.
- * Exits loop when work indiactor is set.
+ * Exits loop when work indicator is set.
  * @param _w Handle to work object.
  */
 void hb_work_loop( void * _w )
@@ -1911,6 +1940,13 @@ void hb_work_loop( void * _w )
                     break;
                 }
             }
+        }
+        else if (w->fifo_in == NULL)
+        {
+            // If this work object is a generator (no input fifo) and it
+            // generated no output, it may be waiting for status from
+            // another thread. Yield so that we don't spin doing nothing.
+            hb_yield();
         }
     }
     if ( buf_out )
@@ -1970,13 +2006,13 @@ static void filter_loop( void * _f )
 
         buf_out = NULL;
 
-#ifdef USE_QSV
+#if HB_PROJECT_FEATURE_QSV
         hb_buffer_t *last_buf_in = buf_in;
 #endif
 
         f->status = f->work( f, &buf_in, &buf_out );
 
-#ifdef USE_QSV
+#if HB_PROJECT_FEATURE_QSV
         if (f->status == HB_FILTER_DELAY &&
             last_buf_in->qsv_details.filter_details != NULL && buf_out == NULL)
         {

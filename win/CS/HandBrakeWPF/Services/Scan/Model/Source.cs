@@ -10,13 +10,16 @@
 namespace HandBrakeWPF.Services.Scan.Model
 {
     using System.Collections.Generic;
-    using System.Runtime.Serialization;
+    using System.IO;
+    using System.Xaml;
     using System.Xml.Serialization;
+
+    using HandBrakeWPF.Model;
+    using HandBrakeWPF.Utilities;
 
     /// <summary>
     /// An object representing a scanned DVD
     /// </summary>
-    [DataContract]
     public class Source
     {
         /// <summary>
@@ -32,15 +35,15 @@ namespace HandBrakeWPF.Services.Scan.Model
         /// Gets or sets ScanPath.
         /// The Path used by the Scan Service.
         /// </summary>
-        [DataMember]
         public string ScanPath { get; set; }
 
         /// <summary>
         /// Gets or sets Titles. A list of titles from the source
         /// </summary>
-        [DataMember]
         [XmlIgnore]
         public List<Title> Titles { get; set; }
+
+        public string SourceName { get; private set; }
 
         /// <summary>
         /// Copy this Source to another Source Model
@@ -52,6 +55,31 @@ namespace HandBrakeWPF.Services.Scan.Model
         {
             source.Titles = this.Titles;
             source.ScanPath = this.ScanPath;
+
+            // Scan Path is a File.
+            if (File.Exists(this.ScanPath))
+            {
+                this.SourceName = Path.GetFileNameWithoutExtension(this.ScanPath);
+            }
+
+            // Scan Path is a folder.
+            if (Directory.Exists(this.ScanPath))
+            {
+                // Check to see if it's a Drive. If yes, use the volume label.
+                foreach (DriveInformation item in DriveUtilities.GetDrives())
+                {
+                    if (item.RootDirectory.Contains(this.ScanPath.Replace("\\\\", "\\")))
+                    {
+                        this.SourceName = item.VolumeLabel;
+                    }
+                }
+
+                // Otherwise, it may be a path of files.
+                if (string.IsNullOrEmpty(this.SourceName))
+                {
+                    this.SourceName = Path.GetFileName(this.ScanPath);
+                }
+            }
         }
     }
 }

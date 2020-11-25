@@ -3,11 +3,10 @@
    This file is part of the HandBrake source code.
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License. */
-   
-#import "HBChapterTitlesController.h"
 
-@import HandBrakeKit.HBChapter;
-@import HandBrakeKit.HBJob;
+#import "HBChapterTitlesController.h"
+#import "HBPreferencesKeys.h"
+@import HandBrakeKit;
 
 @interface NSArray (HBCSVAdditions)
 
@@ -44,7 +43,7 @@
 //     <one>
 //     <John said, "Hello there.">
 //     <three>
-+ (nullable NSArray<NSArray<NSString *> *> *)HB_arrayWithContentsOfCSVURL:(NSURL *)url;
++ (nullable NSArray<NSArray<NSString *> *> *)HB_arrayWithContentsOfCSVURL:(NSURL *)url
 {
     NSString *str = [[NSString alloc] initWithContentsOfURL:url encoding:NSUTF8StringEncoding error:NULL];
 
@@ -158,7 +157,7 @@
 
 @interface HBChapterTitlesController () <NSTableViewDataSource, NSTableViewDelegate>
 
-@property (weak) IBOutlet NSTableView *table;
+@property (nonatomic, weak) IBOutlet NSTableView *table;
 @property (nonatomic, readwrite, strong) NSArray<HBChapter *> *chapterTitles;
 
 @end
@@ -181,6 +180,12 @@
     self.chapterTitles = job.chapterTitles;
 }
 
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    self.table.doubleAction = @selector(doubleClickAction:);
+}
+
 /**
  * Method to edit the next chapter when the user presses Return.
  * We queue the action on the runloop to avoid interfering
@@ -189,7 +194,7 @@
 - (void)controlTextDidEndEditing:(NSNotification *)notification
 {
     NSTableView *chapterTable = self.table;
-    NSInteger column = 2;
+    NSInteger column = [self.table columnForView:[notification object]];
     NSInteger row = [self.table rowForView:[notification object]];
     NSInteger textMovement;
 
@@ -218,6 +223,20 @@
     }
 }
 
+- (IBAction)doubleClickAction:(NSTableView *)sender
+{
+    if (sender.clickedRow > -1) {
+        NSTableColumn *column = sender.tableColumns[sender.clickedColumn];
+        if ([column.identifier isEqualToString:@"title"]) {
+            // edit the cell
+            [sender editColumn:sender.clickedColumn
+                           row:sender.clickedRow
+                     withEvent:nil
+                        select:YES];
+        }
+    }
+}
+
 #pragma mark - Chapter Files Import / Export
 
 - (BOOL)importChaptersFromURL:(NSURL *)URL error:(NSError **)outError
@@ -232,8 +251,8 @@
             {
                 if (NULL != outError)
                 {
-                    *outError = [NSError errorWithDomain:@"HBError" code:0 userInfo:@{NSLocalizedDescriptionKey: NSLocalizedString(@"Invalid chapters CSV file", nil),
-                                                                                      NSLocalizedRecoverySuggestionErrorKey: NSLocalizedString(@"The CSV file is not a valid chapters CSV file.", nil)}];
+                    *outError = [NSError errorWithDomain:@"HBError" code:0 userInfo:@{NSLocalizedDescriptionKey: NSLocalizedString(@"Invalid chapters CSV file", @"Chapters import -> invalid CSV description"),
+                                                                                      NSLocalizedRecoverySuggestionErrorKey: NSLocalizedString(@"The CSV file is not a valid chapters CSV file.", @"Chapters import -> invalid CSV recovery suggestion")}];
                 }
                 return NO;
             }
@@ -251,8 +270,8 @@
 
     if (NULL != outError)
     {
-        *outError = [NSError errorWithDomain:@"HBError" code:0 userInfo:@{NSLocalizedDescriptionKey: NSLocalizedString(@"Incorrect line count", nil),
-                                                                          NSLocalizedRecoverySuggestionErrorKey: NSLocalizedString(@"The line count in the chapters CSV file does not match the number of chapters in the movie.", nil)}];
+        *outError = [NSError errorWithDomain:@"HBError" code:0 userInfo:@{NSLocalizedDescriptionKey: NSLocalizedString(@"Incorrect line count", @"Chapters import -> invalid CSV line count description"),
+                                                                          NSLocalizedRecoverySuggestionErrorKey: NSLocalizedString(@"The line count in the chapters CSV file does not match the number of chapters in the movie.", @"Chapters import -> invalid CSV line count recovery suggestion")}];
     }
 
     return NO;
@@ -261,7 +280,7 @@
 - (IBAction)browseForChapterFile:(id)sender
 {
     // We get the current file name and path from the destination field here
-    NSURL *sourceDirectory = [[NSUserDefaults standardUserDefaults] URLForKey:@"HBLastDestinationDirectory"];
+    NSURL *sourceDirectory = [NSUserDefaults.standardUserDefaults URLForKey:HBLastDestinationDirectoryURL];
 
 	// Open a panel to let the user choose the file
 	NSOpenPanel *panel = [NSOpenPanel openPanel];
@@ -270,7 +289,7 @@
 
     [panel beginSheetModalForWindow:self.view.window completionHandler:^(NSInteger result)
     {
-        if (result == NSFileHandlingPanelOKButton)
+        if (result == NSModalResponseOK)
         {
             NSError *error;
             if ([self importChaptersFromURL:panel.URL error:&error] == NO)
@@ -283,7 +302,7 @@
 
 - (IBAction)browseForChapterFileSave:(id)sender
 {
-    NSURL *destinationDirectory = [[NSUserDefaults standardUserDefaults] URLForKey:@"HBLastDestinationDirectory"];
+    NSURL *destinationDirectory = [NSUserDefaults.standardUserDefaults URLForKey:HBLastDestinationDirectoryURL];
 
     NSSavePanel *panel = [NSSavePanel savePanel];
     panel.allowedFileTypes = @[@"csv"];
@@ -292,7 +311,7 @@
 
     [panel beginSheetModalForWindow:self.view.window completionHandler:^(NSInteger result)
     {
-        if (result == NSFileHandlingPanelOKButton)
+        if (result == NSModalResponseOK)
         {
             NSError *saveError;
             NSMutableString *csv = [NSMutableString string];

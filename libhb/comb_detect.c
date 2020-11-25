@@ -1,6 +1,6 @@
 /* comb_detect.c
 
-   Copyright (c) 2003-2017 HandBrake Team
+   Copyright (c) 2003-2020 HandBrake Team
    This file is part of the HandBrake source code
    Homepage: <http://handbrake.fr/>.
    It may be used under the terms of the GNU General Public License v2.
@@ -28,8 +28,8 @@ Original "Faster" settings:
 #define FILTER_CLASSIC 1
 #define FILTER_ERODE_DILATE 2
 
-#include "hb.h"
-#include "taskset.h"
+#include "handbrake/handbrake.h"
+#include "handbrake/taskset.h"
 
 typedef struct decomb_thread_arg_s {
     hb_filter_private_t *pv;
@@ -626,7 +626,7 @@ static void detect_combed_segment( hb_filter_private_t * pv,
                         else if (spatial_metric == 1)
                         {
                             /* This, for comparison, is what IsCombed uses.
-                               It's better, but still noise senstive.      */
+                               It's better, but still noise sensitive.      */
                                int combing = ( cur[up_1] - cur[0] ) *
                                              ( cur[down_1] - cur[0] );
 
@@ -673,7 +673,7 @@ static void mask_dilate_thread( void *thread_args_v )
     pv = thread_args->pv;
     segment = thread_args->segment;
 
-    hb_log("mask dilate thread started for segment %d", segment);
+    hb_deep_log(3, "mask dilate thread started for segment %d", segment);
 
     while (1)
     {
@@ -775,7 +775,7 @@ static void mask_erode_thread( void *thread_args_v )
     pv = thread_args->pv;
     segment = thread_args->segment;
 
-    hb_log("mask erode thread started for segment %d", segment);
+    hb_deep_log(3, "mask erode thread started for segment %d", segment);
 
     while (1)
     {
@@ -877,7 +877,7 @@ static void mask_filter_thread( void *thread_args_v )
     pv = thread_args->pv;
     segment = thread_args->segment;
 
-    hb_log("mask filter thread started for segment %d", segment);
+    hb_deep_log(3, "mask filter thread started for segment %d", segment);
 
     while (1)
     {
@@ -980,7 +980,7 @@ static void decomb_check_thread( void *thread_args_v )
     pv = thread_args->pv;
     segment = thread_args->segment;
 
-    hb_log("decomb check thread started for segment %d", segment);
+    hb_deep_log(3, "decomb check thread started for segment %d", segment);
 
     while (1)
     {
@@ -1030,7 +1030,7 @@ static void decomb_filter_thread( void *thread_args_v )
     pv = thread_args->pv;
     segment = thread_args->segment;
 
-    hb_log("decomb filter thread started for segment %d", segment);
+    hb_deep_log(3, "decomb filter thread started for segment %d", segment);
 
     while (1)
     {
@@ -1246,7 +1246,7 @@ static int comb_detect_init( hb_filter_object_t * filter,
                     decomb_prev_thread_args->segment_height[pp];
             }
 
-            // Make segment hight a multiple of block_height
+            // Make segment height a multiple of block_height
             int h = hb_image_height(init->pix_fmt, init->geometry.height, pp) / pv->comb_check_nthreads;
             h = h / pv->block_height * pv->block_height;
             if (h == 0)
@@ -1281,7 +1281,7 @@ static int comb_detect_init( hb_filter_object_t * filter,
         if (taskset_init( &pv->mask_filter_taskset, pv->cpu_count,
                           sizeof( decomb_thread_arg_t ) ) == 0)
         {
-            hb_error( "maske filter could not initialize taskset" );
+            hb_error( "mask filter could not initialize taskset" );
         }
 
         decomb_prev_thread_args = NULL;
@@ -1527,7 +1527,10 @@ static int comb_detect_work( hb_filter_object_t * filter,
     {
         // Duplicate last frame and process refs
         store_ref(pv, hb_buffer_dup(pv->ref[2]));
-        process_frame(pv);
+        if (pv->ref[0] != NULL)
+        {
+            process_frame(pv);
+        }
         hb_buffer_list_append(&pv->out_list, in);
         *buf_out = hb_buffer_list_clear(&pv->out_list);
         return HB_FILTER_DONE;
